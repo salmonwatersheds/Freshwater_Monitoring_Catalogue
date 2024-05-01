@@ -124,6 +124,10 @@ unbc_loc <- as.data.frame(unbc_dery_metadata[grep('^Metadata:.*', unbc_dery_meta
   unbc_sf <- st_as_sf(unbc_join, crs = 4326, coords = c("longitude", "latitude"))
   
 
+# Prepare Kitasoo monitoring sites ----------------------------------------
+
+
+  
 # Create monitoring point layer -------------------------------------------
 # Take all spatial layers created above and merge them
   
