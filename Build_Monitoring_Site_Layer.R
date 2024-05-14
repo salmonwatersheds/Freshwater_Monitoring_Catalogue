@@ -33,15 +33,27 @@ library(stringr) # character vector manip
 library(googlesheets4) # access and load google sheets
 library(measurements) # unit conversion
 library(textclean) # clean text
+library(datastreamr) # access to DataStream API (see https://github.com/datastreamapp/datastreamr)
+library(ckanr) # access to CKAN-based open data repositories
 
-## Load functions --------------------------------------------------------
+## Load functions -------------------------------------------------------
 
+# This function helps create a quick dynamic map to check if the output is well located
+spat_check <- function(sf_file) {
+  check <- leaflet::leaflet(sf_file) %>%
+    leaflet::addProviderTiles("CartoDB.Positron") %>%
+    leaflet::addCircleMarkers()
+  return(check)
+}
 
 ## Load data catalogue  -------------------------------------------------
 # might need authentication
 catalog <- read_sheet("https://docs.google.com/spreadsheets/d/1vUXUDR4I9Ufw11jGbk4nVzgi7mdzj2k0-Oy3Eg8mw4Y/edit?pli=1#gid=0",
                       sheet = 2) # Goes to sheet 2 containing the actual sources and dataset unique IDs
 
+
+# Load API tokens ---------------------------------------------------------
+ds_api_token <- read_lines("api_key.txt", n_max = 1) # Reads DataStream API key stored locally
 
 # Prepare BC monitoring sites ----------------------------------------------
 # Load existing data compilation based of WSC, PSC, and BC Gov datasets
@@ -122,8 +134,55 @@ unbc_loc <- as.data.frame(unbc_dery_metadata[grep('^Metadata:.*', unbc_dery_meta
     mutate(dataset_unique_identifier = "SWP_DTS_A051")
   # Create spatial layer
   unbc_sf <- st_as_sf(unbc_join, crs = 4326, coords = c("longitude", "latitude"))
+
+
+# Prepare DFO CoSMO monitoring sites --------------------------------------
+cosmo <- ds_locations(ds_api_token,
+                      filter =  c("DOI='10.25976/0gvo-9d12'"),
+                      select = c('Name', 'NameId', 'Latitude', 'Longitude')) %>%
+    rename(site_name = Name, site_uid = NameId, latitude = Latitude, longitude = Longitude) %>%
+    mutate(dataset_unique_identifier = "SWP_DTS_A022")
+  
+  cosmo_sf <- st_as_sf(cosmo, crs = 4326, coords = c("longitude", "latitude"))
   
 
+# Prepare Resilient Waters monitoring sites -------------------------------
+res_waters <- ds_locations(ds_api_token,
+                           filter = c("DOI='10.25976/vdu8-o597"),
+                           select = c('Name', 'NameId', 'Latitude', 'Longitude')) %>%
+    rename(site_name = Name, site_uid = NameId, latitude = Latitude, longitude = Longitude)
+
+  res_waters_sf <- st_as_sf(res_waters, crs = 4326, coords = c("longitude", "latitude"))
+  
+
+# Prepare Peninsula Streams Society monitoring sites ----------------------
+pss <- ds_locations(ds_api_token,
+                    filter = c("DOI='10.25976/v87k-2m08"),
+                    select = c('Name', 'NameId', 'Latitude', 'Longitude')) %>%
+    rename(site_name = Name, site_uid = NameId, latitude = Latitude, longitude = Longitude)
+
+  pss_sf <- st_as_sf(pss, crs = 4326, coords = c('longitude', 'latitude'))
+  
+# Prepare Sunshine Coast Streamkeepers monitoring sites -------------------
+# Waiting for the dataset to be available on DataStream
+
+
+# Prepare DFO/SKT Upper Bulkley monitoring sites --------------------------
+skt_url <- "https://maps.skeenasalmon.info/geoserver/ows?service=WFS&version=1.0.0&request=GetFeature&typename=geonode%3Amonitoring_sites_ubr_ubr_2018_10_02&outputFormat=csv&srs=EPSG%3A4326"
+  
+  # Store in temporary dir/file (only available during session)
+  skt_temp_dir <- tempdir() 
+  skt_temp_file <- tempfile(tmpdir = skt_temp_dir, fileext = ".csv")
+  
+  download.file(skt_ub, skt_temp_file)
+  
+  skt_ub <- read_csv(skt_temp_file) %>%
+    filter(ORGANIZATI == "Upper Bulkley Roundtable") %>%
+    select(FID, STATION_NA, LATITUDE, LONGITUDE) %>%
+    rename(site_name = STATION_NA, site_uid = FID, latitude = LATITUDE, longitude = LONGITUDE)
+  
+  skt_ub_sf <- st_as_sf(skt_ub, crs = 4326, coords = c('longitude', 'latitude'))
+    
 # Prepare Kitasoo monitoring sites ----------------------------------------
 
 
@@ -131,7 +190,9 @@ unbc_loc <- as.data.frame(unbc_dery_metadata[grep('^Metadata:.*', unbc_dery_meta
 # Create monitoring point layer -------------------------------------------
 # Take all spatial layers created above and merge them
   
-site_catalogue_sf <- bind_rows(bc_compiled_sf, hakai_sf, unbc_sf) %>%
+site_catalogue_sf <- bind_rows(bc_compiled_sf, hakai_sf,
+                               unbc_sf, cosmo_sf, res_waters_sf,
+                               pss_sf, skt_ub_sf) %>%
     left_join(catalog) %>% # This should automatically use the field "dataset_unique_identifier"
     select(-c(comments, date_dts_pse, date_dts_catalog, data_sharing_agreement, data_acquired))
 
