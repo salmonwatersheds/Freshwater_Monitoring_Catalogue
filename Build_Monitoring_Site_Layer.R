@@ -38,6 +38,7 @@ library(textclean) # clean text
 library(datastreamr) # access to DataStream API (see https://github.com/datastreamapp/datastreamr)
 library(ckanr) # access to CKAN-based open data repositories
 library(tictoc) # compute run time for script execution
+library(readxl) # read XLS files
 
 ## Load functions -------------------------------------------------------
 
@@ -48,8 +49,10 @@ spat_check <- function(sf_file) {
     leaflet::addCircleMarkers()
   return(check)
 }
+#############################
+## 1) Load data catalogue  ##
+#############################
 
-## Load data catalogue  -------------------------------------------------
 # might need authentication
 catalog <- read_sheet("https://docs.google.com/spreadsheets/d/1vUXUDR4I9Ufw11jGbk4nVzgi7mdzj2k0-Oy3Eg8mw4Y/edit?pli=1#gid=0",
                       sheet = 3) # Goes to sheet 3 containing the actual sources and dataset unique IDs
@@ -60,6 +63,10 @@ tic("Total run time") # Start run time recording
 # Load API tokens ---------------------------------------------------------
 ds_api_token <- read_lines("03_CODE_ANALYSIS/Freshwater_Monitoring_Catalogue/api_key.txt",
                            n_max = 1) # Reads DataStream API key stored locally
+
+#################################
+## 2) Prepare monitoring sites ##
+#################################
 
 # Prepare BC monitoring sites ----------------------------------------------
 # Load existing data compilation based of WSC, PSC, and BC Gov datasets
@@ -360,18 +367,115 @@ pacfish_sites <- st_read("02_PROCESSED_DATA/DFO_PacFish/Hydromets.shp")
     rename(site_name = SITE_NAME) %>%
     mutate(dataset_unique_identifier = "SWP_DTS_A154")
 
-
-# Prepare Kitasoo monitoring sites ----------------------------------------
-
   
-# Create monitoring point layer -------------------------------------------
+# Prepare Kitasoo monitoring sites ----------------------------------------
+# These sites were provided by the Nation
+kitasoo <- read_csv("02_PROCESSED_DATA/CCIRA_Kitasoo/Locations_Hobo_Tidbit_Loggers.csv")
+  
+  # Format sites
+  kitasoo_sites <- kitasoo %>%
+    rename(site_name = System,
+           latitude = Lat,
+           longitude = Long) %>%
+    mutate(site_id = paste0("kit_", as.character(row_number()))) %>%
+    mutate(dataset_unique_identifier = "SWP_DTS_A049")
+  
+  kitasoo_sites_sf <- st_as_sf(kitasoo_sites, crs = 4326, coords = c('longitude', 'latitude'))
+  
+
+# Prepare Skeena Fisheries Commission monitoring sites --------------------
+GWA_SFC <- read_sf("01_RAW_DATA/Skeena_Fisheries/SFC and GWA Temp Site Metadata for PSF.csv")
+  
+  # Format sites
+  GWA_SFC_sites <- GWA_SFC %>%
+    select(SiteID, `UTM Zone`, `UTM Easting`, `UTM Northing`) %>%
+    mutate(Easting = as.numeric(`UTM Easting`)) %>%
+    mutate(Northing = as.numeric(`UTM Northing`)) %>%
+    filter(!is.na(Northing)) %>%
+    mutate(site_name =  SiteID) %>%
+    rename(site_id = SiteID) %>%
+    mutate(dataset_unique_identifier = "SWP_DTS_A149")
+  
+  GWA_SFC_sites_sf <- st_as_sf(GWA_SFC_sites, 
+                               crs = 32609, # UTM 9N
+                               coords = c('Easting', 'Northing')) %>%
+    select(-c('UTM Zone', 'UTM Easting', 'UTM Northing')) %>%
+    st_transform(crs = 4326)
+
+
+# Prepare Shuswap Fisheries Commission monitoring sites -------------------
+shushwap <- read_sf("01_RAW_DATA/ShuswapFisheriesCommission/Shuswap_Tw_Monitoring_Sites.shp")
+  
+  # Format sites
+  shushwap_sf <- shushwap %>%
+    select(Name) %>%
+    rename(site_name = Name) %>%
+    mutate(site_id = paste0("shushwap_", as.character(row_number()))) %>%
+    mutate(dataset_unique_identifier = "SWP_DTS_A155")
+    
+
+# Prepare Salmon Watershed Lab (SFU) monitoring sites ---------------------
+sfu_swl <- read_csv("01_RAW_DATA/SalmonWatershedLab_SFU/nicola_sites_for_PSF.csv")
+
+  # Format sites
+  sfu_swl_sites <- sfu_swl %>%
+    mutate(site_name = location,
+           site_id = paste0(site_operator, "_", site),
+           latitude = str_sub(lat, end = -3), # Decrease precision of location for site protection
+           longitude = str_sub(long, end = -3), # Decrease precision of location for site protection
+           dataset_unique_identifier = "SWP_DTS_A148") %>%
+    select(site_id, site_name, latitude, longitude, dataset_unique_identifier)
+  
+  sfu_swl_sites_sf <- st_as_sf(sfu_swl_sites, crs = 4326, coords = c("longitude", "latitude"))
+  
+
+# Prepare Dan Moore's UBC monitoring sites --------------------------------
+ubc_moore <- read_csv("01_RAW_DATA/UBC_DanMoore/sites_coords_elevs.csv")
+
+  # Format sites
+  ubc_moote_sites <- ubc_moore %>%
+    mutate(site_id = id,
+           site_name = id,
+           dataset_unique_identifier = "SWP_DTS_A150") %>%
+    select(site_id, site_name, lat, lon, dataset_unique_identifier)
+  
+  ubc_moote_sites_sf <- st_as_sf(ubc_moote_sites, crs = 4326, coords = c("lon", "lat"))
+  
+
+# Prepare Kluane Lake monitoring sites ------------------------------------
+# Read downloaded XLSX file; hoping for API access, although this dataset might not be updated anymore
+# Skipped first rows and last row containing metadata
+uofa_kluane <- read_xlsx("01_RAW_DATA/UofA/KluaneMoorings_RawData.xlsx",
+                         col_names = c("Mooring name", "Mooring location", "Empty", "Depth_Column"),
+                         trim_ws = T,
+                         n_max = 4,
+                         skip = 5)
+  
+  # Format sites
+  uofa_kluane_sites <- uofa_kluane %>%
+    mutate(site_name = `Mooring name`,
+           site_id = paste0("klu_", as.character(row_number())),
+           latitude = as.numeric(str_split_i(`Mooring location`, ",", i = 1)),
+           longitude = as.numeric(str_split_i(`Mooring location`, ",", i = 2)),
+           dataset_unique_identifier = "SWP_DTS_A047") %>%
+    select(-c(`Mooring name`, `Mooring location`, Empty, Depth_Column))
+  
+  uofa_kluane_sites_sf <- st_as_sf(uofa_kluane_sites, crs = 4326, coords = c("longitude", "latitude"))
+
+######################################
+## 3) Create monitoring point layer ##
+######################################
+  
 # Take all spatial layers created above and merge them
   
 site_catalogue_sf <- bind_rows(bc_compiled_sf, hakai_sf,
                                unbc_sf, cosmo_sf, res_waters_sf,
-                               pss_sf, skt_ub_sf, pacfish_sf, swss_sites_sf) %>%
+                               pss_sf, skt_ub_sf, pacfish_sf, swss_sites_sf,
+                               kitasoo_sites_sf, GWA_SFC_sites_sf, shushwap_sf,
+                               sfu_swl_sites_sf, ubc_moote_sites_sf, uofa_kluane_sites_sf) %>%
     left_join(catalog) %>% # This should automatically use the field "dataset_unique_identifier"
     select(-c(Id, comments, date_dts_pse, date_dts_catalog, data_sharing_agreement, data_acquired))
+
 
 # Save catalogue layer
 st_write(site_catalogue_sf, dsn = "02_PROCESSED_DATA/PSF/catalogue_monitoring_sites.gpkg", delete_dsn = T)
