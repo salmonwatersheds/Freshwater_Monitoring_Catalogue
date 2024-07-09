@@ -16,22 +16,24 @@
 ##
 ## Notes:
 ##  Several datasets are not available online to date and were loaded from local drive
-##  This script is subject to regular updates as source files locating monitoring sites change or are added
+##  This script is subject to updates as-needed as source files locating monitoring sites change or are added
+##  This script and its project (Freshwater_Monitoring_Catalog) are contained in their own environment (use of renv)
 ##  Errors might occur if source file formats change
+##  Some online files cannot be downloaded for various reasons, not always known
 ##  Total time to run the full script with 13th Gen Intel(R) Core(TM) i9-13900H 2.60 GHz/3.20GB RAM == 16.97 seconds
 ##
 ##  To do:
 ##  - Create API access for Kluane Lake
-##  - Add renv
+##  - Create API access for Nechako dataset (issues isntalling Zenodo API R package)
 ##  - Merge datasets per provider
 ##  - Connect to distant repos (e.g., CKAN, DataStream) once at the beginning
 ## ---------------------------
 
-## set working directory 
+## set working directory -------------------------------------------------------
 
 setwd("C:/Users/frobinne/Salmon Watersheds Dropbox/François-Nicolas Robinne/X Drive/1_PROJECTS/1_Active/Stream Temperature/Data & Analysis")
 
-## load up the packages we will need -------------------------------------
+## load up the packages we will need -------------------------------------------
 
 library(dplyr) # data manip
 library(readr) # quick data read
@@ -46,7 +48,7 @@ library(tictoc) # compute run time for script execution
 library(readxl) # read XLS files
 library(arcgisbinding) # work with ESRI file formats
 
-## Load functions -------------------------------------------------------
+## Load functions --------------------------------------------------------------
 
 # This function helps create a quick dynamic map to check if the output is well located
 spat_check <- function(sf_file) {
@@ -55,24 +57,28 @@ spat_check <- function(sf_file) {
     leaflet::addCircleMarkers()
   return(check)
 }
-#############################
-## 1) Load data catalogue  ##
-#############################
+################################
+## 1) Set remote connections  ##
+################################
 
-# might need authentication
+# might need authentication ----------------------------------------------------
 catalog <- read_sheet("https://docs.google.com/spreadsheets/d/1vUXUDR4I9Ufw11jGbk4nVzgi7mdzj2k0-Oy3Eg8mw4Y/edit?pli=1#gid=0",
                       sheet = 3) # Goes to sheet 3 containing the actual sources and dataset unique IDs
 
-## Start timer ----------------------------------------------------------
-tic("Total run time") # Start run time recording
-
-# Load API tokens ---------------------------------------------------------
+# Load API tokens --------------------------------------------------------------
+# DataStream
 ds_api_token <- read_lines("03_CODE_ANALYSIS/Freshwater_Monitoring_Catalogue/api_key.txt",
                            n_max = 1) # Reads DataStream API key stored locally
+
+# Connects to Columbia Basin Data Hub ------------------------------------------
+cbdh <- ckanr_setup("https://data.cbwaterhub.ca/") # No need for a key here
 
 #################################
 ## 2) Prepare monitoring sites ##
 #################################
+
+## Start timer -----------------------------------------------------------------
+tic("Total run time") # Start run time recording
 
 # Prepare BC monitoring sites ----------------------------------------------
 # Load existing data compilation based of WSC, PSC, and BC Gov datasets
@@ -99,9 +105,9 @@ bc_compiled <- read_csv("Code/stream-temp/output/stations.csv")
   bc_compiled_sf <- st_as_sf(bc_compiled_uid, crs = 4326, coords = c("longitude","latitude"))
 
 
-# Prepare Hakai monitoring sites -----------------------------------------
+# Prepare Hakai monitoring sites -----------------------------------------------
 # The site coordinates are not store withih the CKAN datasets
-# The code will be updated when (if?) the locations are added to Hakai's CKAN platform
+# The code will be updated when the locations are added to Hakai's CKAN platform
 hakai <- read_csv("01_RAW_DATA/Hakai/kwakstationscoords_v2.csv")
   
   # Reformat the dataset 
@@ -120,7 +126,7 @@ hakai <- read_csv("01_RAW_DATA/Hakai/kwakstationscoords_v2.csv")
   
   hakai_sf <- st_as_sf(hakai_format, crs = 4326, coords = c("longitude", "latitude"))
 
-# Prepare UNBC monitoring sites (Stephen Déry) ---------------------------
+# Prepare UNBC monitoring sites (Stephen Déry) ---------------------------------
 # From downloaded file for now, but should be from Zenodo URL and load in session
 unbc_dery_metadata <- readLines("01_RAW_DATA/UNBC_Dery/NHG Data ReadMe.txt") # Read the file
 unbc_id <- as.data.frame(unbc_dery_metadata[grep('^Metadata:.*', unbc_dery_metadata)-1]) # Extract the line with site name and code
@@ -156,8 +162,8 @@ unbc_loc <- as.data.frame(unbc_dery_metadata[grep('^Metadata:.*', unbc_dery_meta
   unbc_sf <- st_as_sf(unbc_join, crs = 4326, coords = c("longitude", "latitude"))
 
 
-# Prepare DFO CoSMO monitoring sites --------------------------------------
-# Make sure that the api token is loaded
+# Prepare DFO CoSMO monitoring sites -------------------------------------------
+# Make sure that the DS api token is loaded
 cosmo <- ds_locations(ds_api_token,
                       filter =  c("DOI='10.25976/0gvo-9d12'"),
                       select = c('Name', 'NameId', 'Latitude', 'Longitude')) %>%
@@ -167,8 +173,8 @@ cosmo <- ds_locations(ds_api_token,
   cosmo_sf <- st_as_sf(cosmo, crs = 4326, coords = c("longitude", "latitude"))
   
 
-# Prepare Sunshine Coast Streamkeepers monitoring sites -------------------
-# Make sure that the api token is loaded
+# Prepare Sunshine Coast Streamkeepers monitoring sites ------------------------
+# Make sure that the DS api token is loaded
 scsk <- ds_locations(ds_api_token,
                       filter =  c("DOI='10.25976/ze3e-xf34'"),
                       select = c('Name', 'NameId', 'Latitude', 'Longitude')) %>%
@@ -178,8 +184,8 @@ scsk <- ds_locations(ds_api_token,
   scsk_sf <- st_as_sf(scsk, crs = 4326, coords = c("longitude", "latitude"))
   
   
-# Prepare Resilient Waters monitoring sites -------------------------------
-# Make sure that the api token is loaded
+# Prepare Resilient Waters monitoring sites ------------------------------------
+# Make sure that the DS api token is loaded
 res_waters <- ds_locations(ds_api_token,
                            filter = c("DOI='10.25976/vdu8-o597'"),
                            select = c('Name', 'NameId', 'Latitude', 'Longitude')) %>%
@@ -189,8 +195,8 @@ res_waters <- ds_locations(ds_api_token,
   res_waters_sf <- st_as_sf(res_waters, crs = 4326, coords = c("longitude", "latitude"))
   
 
-# Prepare Peninsula Streams Society monitoring sites ----------------------
-# Make sure that the api token is loaded
+# Prepare Peninsula Streams Society monitoring sites ---------------------------
+# Make sure that the DS api token is loaded
 pss <- ds_locations(ds_api_token,
                     filter = c("DOI='10.25976/v87k-2m08"),
                     select = c('Name', 'NameId', 'Latitude', 'Longitude')) %>%
@@ -200,10 +206,10 @@ pss <- ds_locations(ds_api_token,
   pss_sf <- st_as_sf(pss, crs = 4326, coords = c('longitude', 'latitude'))
 
 
-# Prepare DFO/SKT Upper Bulkley monitoring sites --------------------------
+# Prepare DFO/SKT Upper Bulkley monitoring sites -------------------------------
 skt_url <- "https://maps.skeenasalmon.info/geoserver/ows?service=WFS&version=1.0.0&request=GetFeature&typename=geonode%3Amonitoring_sites_ubr_ubr_2018_10_02&outputFormat=csv&srs=EPSG%3A4326"
   
-  # Store in temporary dir/file (only available during session)
+  # Store in temporary directory/file (only available during session)
   skt_temp_dir <- tempdir() 
   skt_temp_file <- tempfile(tmpdir = skt_temp_dir, fileext = ".csv")
   
@@ -218,10 +224,8 @@ skt_url <- "https://maps.skeenasalmon.info/geoserver/ows?service=WFS&version=1.0
   skt_ub_sf <- st_as_sf(skt_ub, crs = 4326, coords = c('longitude', 'latitude'))
     
 
-# Prepare Salmo WSS monitoring sites --------------------------------------
-# Connects to Columbia Basin Data Hub
-cbdh <- ckanr_setup("https://data.cbwaterhub.ca/") # No need for a key here
-  
+# Prepare Salmo WSS monitoring sites -------------------------------------------
+
   # Erie creek (upper)
   # Get the CKAN resource
   swss_erie <- resource_show(id = "ce7f6bb3-f7c1-4d55-9ee3-4380a88c9ceb",
@@ -1192,20 +1196,512 @@ cbdh <- ckanr_setup("https://data.cbwaterhub.ca/") # No need for a key here
   # Merge all Friends of Kootenay Lake together
   fkl_all_sites <- bind_rows(fkl_shor_site_sf, fkl_west_site_sf)
   
-# # Prepare Nanwakolas Council monitoring sites -------------------------------------
-# nanwakolas <- read_csv("01_RAW_DATA/Nanwakolas/NC50_draft_sites.csv")
-#   
-#   # Format sites
-#   nanwakolas_sites <- nanwakolas %>%
-#     mutate(site_uid = paste0("nwkls_", OID_),
-#            site_name = `site_uid`,
-#            lat = as.numeric(str_sub(DDLat, end = -2)),
-#            lon = as.numeric(paste0("-", str_sub(DDLon, end = -2))),
-#            dataset_unique_identifier = "SWP_DTS_A157") %>%
-#     select(-(OID_))
-#   
-#   nanwakolas_sites_sf <- st_as_sf(nanwakolas_sites, crs = 4326, coords = c("lon", "lat"))
-    
+
+# Prepare Friends of Lardeau River monitoring sites ---------------------------
+# Those sites below can be merged if necessary, but they are separate entries in the catalog
+# Connects to Columbia Basin Data Hub
+cbdh <- ckanr_setup("https://data.cbwaterhub.ca/") # No need for a key here
+  
+  # Poplar Creek
+  # Get the CKAN resource
+  flr_pop <- resource_show(id = "53b92bd2-6a43-4401-8a1a-77abb15d3d74",
+                            as = "table")
+  # Download the file into the current session
+  fetch_flr_pop <- ckan_fetch(flr_pop$url, "session", format = ".csv")
+  # Format file
+  flr_pop_site <- fetch_flr_pop %>%
+    first() %>% # Only need the first record to get coordinates
+    select(site_id, latitude, longitude) %>%
+    mutate(site_uid = site_id) %>% # llc for Living Lakes Canada; nk for North Kootenay
+    mutate(site_name = "Poplar Creek",
+           dataset_unique_identifier = "SWP_DTS_A125")
+  
+  flr_pop_site_sf <- st_as_sf(flr_pop_site, crs = 4326, coords = c('longitude', 'latitude'))
+  
+  # Lardeau River
+  # Get the CKAN resource
+  flr_lar <- resource_show(id = "dd2d8d49-6d61-42b7-b695-0c81c2cdfa52",
+                           as = "table")
+  # Download the file into the current session
+  fetch_flr_lar <- ckan_fetch(flr_lar$url, "session", format = ".csv")
+  # Format file
+  flr_lar_site <- fetch_flr_lar %>%
+    first() %>% # Only need the first record to get coordinates
+    select(site_id, latitude, longitude) %>%
+    mutate(site_uid = site_id) %>% # llc for Living Lakes Canada; nk for North Kootenay
+    mutate(site_name = "Lardeau River",
+           dataset_unique_identifier = "SWP_DTS_A126")
+  
+  flr_lar_site_sf <- st_as_sf(flr_lar_site, crs = 4326, coords = c('longitude', 'latitude'))
+  
+  # Lardeau River Upper
+  # Get the CKAN resource
+  flr_lru <- resource_show(id = "e0f2fa09-5d7f-4d4c-b1e8-73b74556c8fc",
+                           as = "table")
+  # Download the file into the current session
+  fetch_flr_lru <- ckan_fetch(flr_lru$url, "session", format = ".csv")
+  # Format file
+  flr_lru_site <- fetch_flr_lru %>%
+    first() %>% # Only need the first record to get coordinates
+    select(site_id, latitude, longitude) %>%
+    mutate(site_uid = site_id) %>% # llc for Living Lakes Canada; nk for North Kootenay
+    mutate(site_name = "Lardeau River Upper",
+           dataset_unique_identifier = "SWP_DTS_A127")
+  
+  flr_lru_site_sf <- st_as_sf(flr_lru_site, crs = 4326, coords = c('longitude', 'latitude'))
+  
+  # Merge Friends of the Lardeau River monitoring sites
+  flr_all_sites_sf <- bind_rows(flr_pop_site_sf, flr_lar_site_sf, flr_lru_site_sf)
+
+  
+# Prepare Slocan Lake Research Centre monitoring sites ---------------------------
+
+  # Wilson Creek
+  # Get the CKAN resource
+  slrc_wil <- resource_show(id = "1d4cd5a3-fd1e-4349-b8db-17492a1f15fa",
+                           as = "table")
+  # Download the file into the current session
+  fetch_slrc_wil <- ckan_fetch(slrc_wil$url, "session", format = ".csv")
+  # Format file
+  slrc_wil_site <- fetch_slrc_wil %>%
+    first() %>% # Only need the first record to get coordinates
+    select(site_id, latitude, longitude) %>%
+    mutate(site_uid = site_id) %>% # llc for Living Lakes Canada; nk for North Kootenay
+    mutate(site_name = "Wilson Creek",
+           dataset_unique_identifier = "SWP_DTS_A096")
+  
+  slrc_wil_site_sf <- st_as_sf(slrc_wil_site, crs = 4326, coords = c('longitude', 'latitude'))
+  
+
+# Prepare Slocan Lake Stewardship Society and Okanagan Nation Alliance ---------------------------
+# Those sites below can be merged if necessary, but they are separate entries in the catalog
+  
+  # Wilson Creek 1
+  # Get the CKAN resource
+  slon_wil1 <- resource_show(id = "780dce0f-cab8-4fc9-bdf4-8a72b4d451e0",
+                            as = "table")
+  # Download the file into the current session
+  fetch_slon_wil1 <- ckan_fetch(slon_wil1$url, "session", format = ".csv")
+  # Format file
+  slon_wil1_site <- fetch_slon_wil1 %>%
+    first() %>% # Only need the first record to get coordinates
+    select(site_id, latitude, longitude) %>%
+    mutate(site_uid = site_id) %>% # llc for Living Lakes Canada; nk for North Kootenay
+    mutate(site_name = "Wilson Creek 1",
+           dataset_unique_identifier = "SWP_DTS_A067")
+  
+  slon_wil1_site_sf <- st_as_sf(slon_wil1_site, crs = 4326, coords = c('longitude', 'latitude'))
+  
+  # Wilson Creek 2
+  # Get the CKAN resource
+  slon_wil2 <- resource_show(id = "70a6b695-afda-4c82-8434-c50254a3af75",
+                            as = "table")
+  # Download the file into the current session
+  fetch_slon_wil2 <- ckan_fetch(slon_wil2$url, "session", format = ".csv")
+  # Format file
+  slon_wil2_site <- fetch_slon_wil2 %>%
+    first() %>% # Only need the first record to get coordinates
+    select(site_id, latitude, longitude) %>%
+    mutate(site_uid = site_id) %>% # llc for Living Lakes Canada; nk for North Kootenay
+    mutate(site_name = "Wilson Creek 2",
+           dataset_unique_identifier = "SWP_DTS_A068")
+  
+  slon_wil2_site_sf <- st_as_sf(slon_wil2_site, crs = 4326, coords = c('longitude', 'latitude'))
+  
+  # Wragge Creek
+  # Get the CKAN resource
+  slon_wrag <- resource_show(id = "4b5c0605-14a7-4ff0-b2c5-f515511397b5",
+                             as = "table")
+  # Download the file into the current session
+  fetch_slon_wrag <- ckan_fetch(slon_wrag$url, "session", format = ".csv")
+  # Format file
+  slon_wrag_site <- fetch_slon_wrag %>%
+    first() %>% # Only need the first record to get coordinates
+    select(site_id, latitude, longitude) %>%
+    mutate(site_uid = site_id) %>% # llc for Living Lakes Canada; nk for North Kootenay
+    mutate(site_name = "Wragge Creek",
+           dataset_unique_identifier = "SWP_DTS_A069")
+  
+  slon_wrag_site_sf <- st_as_sf(slon_wrag_site, crs = 4326, coords = c('longitude', 'latitude'))
+  
+  # Shannon Creek
+  # Get the CKAN resource
+  slon_shan <- resource_show(id = "5077621c-0b84-4eca-bdf7-9764fcfc19e2",
+                             as = "table")
+  # Download the file into the current session
+  fetch_slon_shan <- ckan_fetch(slon_shan$url, "session", format = ".csv")
+  # Format file
+  slon_shan_site <- fetch_slon_shan %>%
+    first() %>% # Only need the first record to get coordinates
+    select(site_id, latitude, longitude) %>%
+    mutate(site_uid = site_id) %>% # llc for Living Lakes Canada; nk for North Kootenay
+    mutate(site_name = "Shannon Creek",
+           dataset_unique_identifier = "SWP_DTS_A070")
+  
+  slon_shan_site_sf <- st_as_sf(slon_shan_site, crs = 4326, coords = c('longitude', 'latitude'))
+  
+  # Maurier Creek
+  # Get the CKAN resource
+  slon_maur <- resource_show(id = "4cfce93d-b9c1-47e6-a563-ca182fcd6b91",
+                             as = "table")
+  # Download the file into the current session
+  fetch_slon_maur <- ckan_fetch(slon_maur$url, "session", format = ".csv")
+  # Format file
+  slon_maur_site <- fetch_slon_maur %>%
+    first() %>% # Only need the first record to get coordinates
+    select(site_id, latitude, longitude) %>%
+    mutate(site_uid = site_id) %>% # llc for Living Lakes Canada; nk for North Kootenay
+    mutate(site_name = "Maurier Creek",
+           dataset_unique_identifier = "SWP_DTS_A072")
+  
+  slon_maur_site_sf <- st_as_sf(slon_maur_site, crs = 4326, coords = c('longitude', 'latitude'))
+  
+  # Hunter Siding
+  # Get the CKAN resource
+  slon_hunt <- resource_show(id = "27969baa-5ee6-4372-bedf-9b1e9a5eb589",
+                             as = "table")
+  # Download the file into the current session
+  fetch_slon_hunt <- ckan_fetch(slon_hunt$url, "session", format = ".csv")
+  # Format file
+  slon_hunt_site <- fetch_slon_hunt %>%
+    first() %>% # Only need the first record to get coordinates
+    select(site_id, latitude, longitude) %>%
+    mutate(site_uid = site_id) %>% # llc for Living Lakes Canada; nk for North Kootenay
+    mutate(site_name = "Hunter Siding",
+           dataset_unique_identifier = "SWP_DTS_A073")
+  
+  slon_hunt_site_sf <- st_as_sf(slon_hunt_site, crs = 4326, coords = c('longitude', 'latitude'))
+  
+  # Dennis Creek
+  # Get the CKAN resource
+  slon_den <- resource_show(id = "6d613f61-75b5-45cd-b286-8aea9457e89a",
+                             as = "table")
+  # Download the file into the current session
+  fetch_slon_den <- ckan_fetch(slon_den$url, "session", format = ".csv")
+  # Format file
+  slon_den_site <- fetch_slon_den %>%
+    first() %>% # Only need the first record to get coordinates
+    select(site_id, latitude, longitude) %>%
+    mutate(site_uid = site_id) %>% # llc for Living Lakes Canada; nk for North Kootenay
+    mutate(site_name = "Dennis Creek",
+           dataset_unique_identifier = "SWP_DTS_A074")
+  
+  slon_den_site_sf <- st_as_sf(slon_den_site, crs = 4326, coords = c('longitude', 'latitude'))
+  
+  # Slocan River
+  # Get the CKAN resource
+  slon_sloc <- resource_show(id = "6659e90f-6f1b-4078-8624-ae52dabe6ce8",
+                            as = "table")
+  # Download the file into the current session
+  fetch_slon_sloc <- ckan_fetch(slon_sloc$url, "session", format = ".csv")
+  # Format file
+  slon_sloc_site <- fetch_slon_sloc %>%
+    first() %>% # Only need the first record to get coordinates
+    select(site_id, latitude, longitude) %>%
+    mutate(site_uid = site_id) %>% # llc for Living Lakes Canada; nk for North Kootenay
+    mutate(site_name = "Slocan River",
+           dataset_unique_identifier = "SWP_DTS_A089")
+  
+  slon_sloc_site_sf <- st_as_sf(slon_sloc_site, crs = 4326, coords = c('longitude', 'latitude'))
+  
+  # Fitzstubbs Creek
+  # Get the CKAN resource
+  slon_fitz <- resource_show(id = "f563623f-3fc3-4e72-b36f-e3a56810bf6b",
+                             as = "table")
+  # Download the file into the current session
+  fetch_slon_fitz <- ckan_fetch(slon_fitz$url, "session", format = ".csv")
+  # Format file
+  slon_fitz_site <- fetch_slon_fitz %>%
+    first() %>% # Only need the first record to get coordinates
+    select(site_id, latitude, longitude) %>%
+    mutate(site_uid = site_id) %>% # llc for Living Lakes Canada; nk for North Kootenay
+    mutate(site_name = "Fitzstubbs Creek",
+           dataset_unique_identifier = "SWP_DTS_A090")
+  
+  slon_fitz_site_sf <- st_as_sf(slon_fitz_site, crs = 4326, coords = c('longitude', 'latitude'))
+  
+  # Merge Slocan Lake Stewardship Society and Okanagan Nation Alliance sites together
+  slon_all_sites_sf <- bind_rows(slon_fitz_site_sf, slon_sloc_site_sf, slon_den_site_sf,
+                                 slon_hunt_site_sf, slon_maur_site_sf, slon_shan_site_sf,
+                                 slon_wrag_site_sf, slon_wil2_site_sf, slon_wil1_site_sf)
+  
+  #### *** Erroneous file *** ####
+  # Silverton Creek 
+  # Get the CKAN resource
+  # slon_silv <- resource_show(id = "2ad81bc0-fc5f-4319-91ed-f67cceeeafa9",
+  #                            as = "table")
+  # # Download the file into the current session
+  # fetch_slon_silv <- ckan_fetch(slon_silv$url, "session", format = ".csv")
+  # # Format file
+  # slon_silv_site <- fetch_slon_silv %>%
+  #   first() %>% # Only need the first record to get coordinates
+  #   select(site_id, latitude, longitude) %>%
+  #   mutate(site_uid = site_id) %>% # llc for Living Lakes Canada; nk for North Kootenay
+  #   mutate(site_name = "Silverton Creek",
+  #          dataset_unique_identifier = "SWP_DTS_A071")
+  # 
+  # slon_silv_site_sf <- st_as_sf(slon_silv_site, crs = 4326, coords = c('longitude', 'latitude'))
+  
+
+# Prepare Slocan Park CARE Society monitoring sites ----------------------------
+  
+  # Radcliffe Creek
+  # Get the CKAN resource
+  care_rad <- resource_show(id = "db93de9f-69ed-4145-b338-6a42e1af4473",
+                             as = "table")
+  # Download the file into the current session
+  fetch_care_rad <- ckan_fetch(care_rad$url, "session", format = ".csv")
+  # Format file
+  care_rad_site <- fetch_care_rad %>%
+    first() %>% # Only need the first record to get coordinates
+    select(site_id, latitude, longitude) %>%
+    mutate(site_uid = site_id) %>% # llc for Living Lakes Canada; nk for North Kootenay
+    mutate(site_name = "Radcliffe Creek",
+           dataset_unique_identifier = "SWP_DTS_A107")
+  
+  care_rad_site_sf <- st_as_sf(care_rad_site, crs = 4326, coords = c('longitude', 'latitude'))
+  
+
+# Prepare Slocan River Streamkeepers monitoring sites ---------------------
+# Those sites below can be merged if necessary, but they are separate entries in the catalog
+  
+  # South Slocan River
+  # Get the CKAN resource
+  srs_ssr <- resource_show(id = "23b88459-685a-4e5d-a90d-9edd5f9538a7",
+                            as = "table")
+  # Download the file into the current session
+  fetch_srs_ssr <- ckan_fetch(srs_ssr$url, "session", format = ".csv")
+  # Format file
+  srs_ssr_site <- fetch_srs_ssr %>%
+    first() %>% # Only need the first record to get coordinates
+    select(site_id, latitude, longitude) %>%
+    mutate(site_uid = site_id) %>% # llc for Living Lakes Canada; nk for North Kootenay
+    mutate(site_name = "South Slocan River",
+           dataset_unique_identifier = "SWP_DTS_A099")
+  
+  srs_ssr_site_sf <- st_as_sf(srs_ssr_site, crs = 4326, coords = c('longitude', 'latitude'))
+  
+  # Little Slocan River
+  # Get the CKAN resource
+  srs_lsr <- resource_show(id = "6bfbbc9d-6965-4351-929b-01beb0209d2c",
+                           as = "table")
+  # Download the file into the current session
+  fetch_srs_lsr <- ckan_fetch(srs_lsr$url, "session", format = ".csv")
+  # Format file
+  srs_lsr_site <- fetch_srs_lsr %>%
+    first() %>% # Only need the first record to get coordinates
+    select(site_id, latitude, longitude) %>%
+    mutate(site_uid = site_id) %>% # llc for Living Lakes Canada; nk for North Kootenay
+    mutate(site_name = "Little Slocan River",
+           dataset_unique_identifier = "SWP_DTS_A091")
+  
+  srs_lsr_site_sf <- st_as_sf(srs_lsr_site, crs = 4326, coords = c('longitude', 'latitude'))
+  
+  # Springer Creek
+  # Get the CKAN resource
+  srs_spr <- resource_show(id = "b38ff843-bd98-4bbc-8acd-7f0a7d112f3f",
+                           as = "table")
+  # Download the file into the current session
+  fetch_srs_spr <- ckan_fetch(srs_spr$url, "session", format = ".csv")
+  # Format file
+  srs_spr_site <- fetch_srs_spr %>%
+    first() %>% # Only need the first record to get coordinates
+    select(site_id, latitude, longitude) %>%
+    mutate(site_uid = site_id) %>% # llc for Living Lakes Canada; nk for North Kootenay
+    mutate(site_name = "Springer Creek",
+           dataset_unique_identifier = "SWP_DTS_A124")
+  
+  srs_spr_site_sf <- st_as_sf(srs_spr_site, crs = 4326, coords = c('longitude', 'latitude'))
+  
+  # Slocan River 2
+  # Get the CKAN resource
+  srs_slo2 <- resource_show(id = "cdd880e1-72ac-41fb-bd9f-9ad595a50faf",
+                           as = "table")
+  # Download the file into the current session
+  fetch_srs_slo2 <- ckan_fetch(srs_slo2$url, "session", format = ".csv")
+  # Format file
+  srs_slo2_site <- fetch_srs_slo2 %>%
+    first() %>% # Only need the first record to get coordinates
+    select(site_id, latitude, longitude) %>%
+    mutate(site_uid = site_id) %>% # llc for Living Lakes Canada; nk for North Kootenay
+    mutate(site_name = "Slocan River 2",
+           dataset_unique_identifier = "SWP_DTS_A097")
+  
+  srs_slo2_site_sf <- st_as_sf(srs_slo2_site, crs = 4326, coords = c('longitude', 'latitude'))
+  
+  # Trozzo Creek 
+  # Get the CKAN resource
+  srs_troz <- resource_show(id = "a534208b-370e-45b2-998c-6c296687d23d",
+                            as = "table")
+  # Download the file into the current session
+  fetch_srs_troz <- ckan_fetch(srs_troz$url, "session", format = ".csv")
+  # Format file
+  srs_troz_site <- fetch_srs_troz %>%
+    first() %>% # Only need the first record to get coordinates
+    select(site_id, latitude, longitude) %>%
+    mutate(site_uid = site_id) %>% # llc for Living Lakes Canada; nk for North Kootenay
+    mutate(site_name = "Trozzo Creek",
+           dataset_unique_identifier = "SWP_DTS_A098")
+  
+  srs_troz_site_sf <- st_as_sf(srs_troz_site, crs = 4326, coords = c('longitude', 'latitude'))
+  
+  # Slocan River 1
+  # Get the CKAN resource
+  srs_slo1 <- resource_show(id = "6d41e186-8b19-471b-ad8d-71637b48b43f",
+                            as = "table")
+  # Download the file into the current session
+  fetch_srs_slo1 <- ckan_fetch(srs_slo1$url, "session", format = ".csv")
+  # Format file
+  srs_slo1_site <- fetch_srs_slo1 %>%
+    first() %>% # Only need the first record to get coordinates
+    select(site_id, latitude, longitude) %>%
+    mutate(site_uid = site_id) %>% # llc for Living Lakes Canada; nk for North Kootenay
+    mutate(site_name = "Slocan River 1",
+           dataset_unique_identifier = "SWP_DTS_A105")
+  
+  srs_slo1_site_sf <- st_as_sf(srs_slo1_site, crs = 4326, coords = c('longitude', 'latitude'))
+  
+  # Slocan River 3
+  # Get the CKAN resource
+  srs_slo3 <- resource_show(id = "08e676e4-e8ac-40a3-8ea7-81548417e226",
+                            as = "table")
+  # Download the file into the current session
+  fetch_srs_slo3 <- ckan_fetch(srs_slo3$url, "session", format = ".csv")
+  # Format file
+  srs_slo3_site <- fetch_srs_slo3 %>%
+    first() %>% # Only need the first record to get coordinates
+    select(site_id, latitude, longitude) %>%
+    mutate(site_uid = site_id) %>% # llc for Living Lakes Canada; nk for North Kootenay
+    mutate(site_name = "Slocan River 3",
+           dataset_unique_identifier = "SWP_DTS_A106")
+  
+  srs_slo3_site_sf <- st_as_sf(srs_slo3_site, crs = 4326, coords = c('longitude', 'latitude'))
+  
+  # Lemon Creek
+  # Get the CKAN resource
+  srs_lemo <- resource_show(id = "4bd66768-f115-41ce-8dd9-4da9b570a3e7",
+                            as = "table")
+  # Download the file into the current session
+  fetch_srs_lemo <- ckan_fetch(srs_lemo$url, "session", format = ".csv")
+  # Format file
+  srs_lemo_site <- fetch_srs_lemo %>%
+    first() %>% # Only need the first record to get coordinates
+    select(site_id, latitude, longitude) %>%
+    mutate(site_uid = site_id) %>% # llc for Living Lakes Canada; nk for North Kootenay
+    mutate(site_name = "Lemon Creek",
+           dataset_unique_identifier = "SWP_DTS_A109")
+  
+  srs_lemo_site_sf <- st_as_sf(srs_lemo_site, crs = 4326, coords = c('longitude', 'latitude'))
+  
+  # Hoder Creek
+  # Get the CKAN resource
+  srs_hodr <- resource_show(id = "01b063ea-58b1-4928-8822-daddcf98743b",
+                            as = "table")
+  # Download the file into the current session
+  fetch_srs_hodr <- ckan_fetch(srs_hodr$url, "session", format = ".csv")
+  # Format file
+  srs_hodr_site <- fetch_srs_hodr %>%
+    first() %>% # Only need the first record to get coordinates
+    select(site_id, latitude, longitude) %>%
+    mutate(site_uid = site_id) %>% # llc for Living Lakes Canada; nk for North Kootenay
+    mutate(site_name = "Hoder Creek",
+           dataset_unique_identifier = "SWP_DTS_A110")
+  
+  srs_hodr_site_sf <- st_as_sf(srs_hodr_site, crs = 4326, coords = c('longitude', 'latitude'))
+  
+  # Winlow Creek
+  # Get the CKAN resource
+  srs_winl <- resource_show(id = "97bd4a1b-0c88-4c7f-9f31-16602f4d4c85",
+                            as = "table")
+  # Download the file into the current session
+  fetch_srs_winl <- ckan_fetch(srs_winl$url, "session", format = ".csv")
+  # Format file
+  srs_winl_site <- fetch_srs_winl %>%
+    first() %>% # Only need the first record to get coordinates
+    select(site_id, latitude, longitude) %>%
+    mutate(site_uid = site_id) %>% # llc for Living Lakes Canada; nk for North Kootenay
+    mutate(site_name = "Winlow Creek",
+           dataset_unique_identifier = "SWP_DTS_A131")
+  
+  srs_winl_site_sf <- st_as_sf(srs_winl_site, crs = 4326, coords = c('longitude', 'latitude'))
+
+  # Merge Slocan Lake Stewardship Society and Okanagan Nation Alliance sites together
+  srs_all_sites_sf <- bind_rows(srs_ssr_site_sf, srs_lsr_site_sf,srs_spr_site_sf,
+                                srs_slo2_site_sf, srs_troz_site_sf, srs_slo1_site_sf,
+                                srs_slo3_site_sf, srs_lemo_site_sf, srs_hodr_site_sf,
+                                srs_winl_site_sf)  
+  
+
+# Prepare Wildsight monitoring sites -------------------------------------------
+# Those sites below can be merged if necessary, but they are separate entries in the catalog
+  
+  # Birchlands Creek
+  # Get the CKAN resource
+  wil_birc <- resource_show(id = "2d0b58d6-fbf0-4522-b52e-13f691be7fdc",
+                            as = "table")
+  # Download the file into the current session
+  fetch_wil_birc <- ckan_fetch(wil_birc$url, "session", format = ".csv")
+  # Format file
+  wil_birc_site <- fetch_wil_birc %>%
+    first() %>% # Only need the first record to get coordinates
+    select(site_id, latitude, longitude) %>%
+    mutate(site_uid = site_id) %>%
+    mutate(site_name = "Birchlands Creek",
+           dataset_unique_identifier = "SWP_DTS_A133")
+  
+  wil_birc_site_sf <- st_as_sf(wil_birc_site, crs = 4326, coords = c('longitude', 'latitude'))
+  
+  # Kimberley Creek 3
+  # Get the CKAN resource
+  wil_kim3 <- resource_show(id = "4d90fd52-4272-47ef-9654-0804653a4d2f",
+                            as = "table")
+  # Download the file into the current session
+  fetch_wil_kim3 <- ckan_fetch(wil_kim3$url, "session", format = ".csv")
+  # Format file
+  wil_kim3_site <- fetch_wil_kim3 %>%
+    first() %>% # Only need the first record to get coordinates
+    select(site_id, latitude, longitude) %>%
+    mutate(site_uid = site_id) %>%
+    mutate(site_name = "Kimberley Creek 3",
+           dataset_unique_identifier = "SWP_DTS_A128")
+  
+  wil_kim3_site_sf <- st_as_sf(wil_kim3_site, crs = 4326, coords = c('longitude', 'latitude'))
+  
+  # Kimberley Creek 2
+  # Get the CKAN resource
+  wil_kim2 <- resource_show(id = "430fc93a-a485-4dc7-9a21-d8e510434733",
+                            as = "table")
+  # Download the file into the current session
+  fetch_wil_kim2 <- ckan_fetch(wil_kim2$url, "session", format = ".csv")
+  # Format file
+  wil_kim2_site <- fetch_wil_kim2 %>%
+    first() %>% # Only need the first record to get coordinates
+    select(site_id, latitude, longitude) %>%
+    mutate(site_uid = site_id) %>%
+    mutate(site_name = "Kimberley Creek 2",
+           dataset_unique_identifier = "SWP_DTS_A129")
+  
+  wil_kim2_site_sf <- st_as_sf(wil_kim2_site, crs = 4326, coords = c('longitude', 'latitude'))
+  
+  # Kimberley Creek 1
+  # Get the CKAN resource
+  wil_kim1 <- resource_show(id = "e0d80b8a-4787-432b-b78b-d4ef39ba03e3",
+                            as = "table")
+  # Download the file into the current session
+  fetch_wil_kim1 <- ckan_fetch(wil_kim1$url, "session", format = ".csv")
+  # Format file
+  wil_kim1_site <- fetch_wil_kim1 %>%
+    first() %>% # Only need the first record to get coordinates
+    select(site_id, latitude, longitude) %>%
+    mutate(site_uid = site_id) %>%
+    mutate(site_name = "Kimberley Creek 1",
+           dataset_unique_identifier = "SWP_DTS_A130")
+  
+  wil_kim1_site_sf <- st_as_sf(wil_kim1_site, crs = 4326, coords = c('longitude', 'latitude'))
+  
+  # Merge Wildsight monitoring sites together
+  wil_all_sites_sf <- bind_rows(wil_birc_site_sf, wil_kim3_site_sf,
+                                wil_kim2_site_sf, wil_kim1_site_sf)
 
 ######################################
 ## 3) Create monitoring point layer ##
@@ -1229,7 +1725,8 @@ site_catalogue_sf <- bind_rows(bc_compiled_sf, hakai_sf,
                                ross_cent_site_sf, ross_fala_site_sf, ross_golpher_site_sf,
                                ross_hale_site_sf, ross_milk_site_sf, ross_tiger_site_sf,
                                ross_topp_site_sf, ross_warf_site_sf, era_all_sites_sf,
-                               fkl_all_sites) %>%
+                               fkl_all_sites, flr_all_sites_sf, slrc_wil_site_sf, slon_all_sites_sf,
+                               wil_all_sites_sf, srs_all_sites_sf, care_rad_site_sf) %>%
     left_join(catalog) %>% # This should automatically use the field "dataset_unique_identifier"
     select(-c(Id, comments, date_dts_pse, date_dts_catalog, data_sharing_agreement, data_acquired))
 
