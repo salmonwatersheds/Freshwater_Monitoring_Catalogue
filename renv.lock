@@ -105,23 +105,6 @@
       ],
       "Hash": "ae6cbbe1492f4de79c45fce06f967ce8"
     },
-    "arcgisbinding": {
-      "Package": "arcgisbinding",
-      "Version": "1.0.1.305",
-      "Source": "GitHub",
-      "OS_type": "windows",
-      "RemoteType": "github",
-      "RemoteHost": "api.github.com",
-      "RemoteRepo": "r-bridge",
-      "RemoteUsername": "R-ArcGIS",
-      "RemoteRef": "HEAD",
-      "RemoteSha": "07861b1dc77de93ab7ce997233733ba9ef65e306",
-      "Requirements": [
-        "R",
-        "methods"
-      ],
-      "Hash": "b35ca64f832e3ebbc0754391040faad4"
-    },
     "askpass": {
       "Package": "askpass",
       "Version": "1.2.0",

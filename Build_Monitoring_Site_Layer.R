@@ -2,9 +2,10 @@
 ##
 ## Script name: Build_Monitoring_Site_Layer.R
 ##
-## Purpose of script: Gather, transform, and merge data files showing the location of monitoring sites.
+## Purpose of script: Gather, transform, and merge data files showing the location of freshwater temperature monitoring sites.
 ##                    Then join sites to their catalog entry to bring in metadata
-##                    Exported to ESRI compatible format for display in ArcGIS online
+##                    Exported to ESRI compatible format for conversion to file geoatabase and upload in ArcGIS online
+##                    ESRI Experience platform: https://experience.arcgis.com/experience/c435a5188ec54d5bbc10b85f6af99d05
 ##
 ## Author: Dr.François-Nicolas Robinne, Data/Habitat analyst
 ##
@@ -19,14 +20,15 @@
 ##  This script is subject to updates as-needed as source files locating monitoring sites change or are added
 ##  This script and its project (Freshwater_Monitoring_Catalog) are contained in their own environment (use of renv)
 ##  Errors might occur if source file formats change
+##  Users wanting to reuse this script must have their own API keys
+##  Users wanting to reuse this script may have to request access to the catalogue stored on Google Sheets
 ##  Some online files cannot be downloaded for various reasons, not always known
-##  Total time to run the full script with 13th Gen Intel(R) Core(TM) i9-13900H 2.60 GHz/3.20GB RAM == 16.97 seconds
+##  Total time to run the full script with 13th Gen Intel(R) Core(TM) i9-13900H 2.60 GHz/3.20GB RAM == 96.87 seconds
 ##
-##  To do:
+##  To do (if time and interest, depending on update frequency):
 ##  - Create API access for Kluane Lake
 ##  - Create API access for Nechako dataset (issues isntalling Zenodo API R package)
-##  - Merge datasets per provider
-##  - Connect to distant repos (e.g., CKAN, DataStream) once at the beginning
+##  - Add ArcGIS-binding capabilities for direct export to file GDB
 ## ---------------------------
 
 ## set working directory -------------------------------------------------------
@@ -46,7 +48,6 @@ library(datastreamr) # access to DataStream API (see https://github.com/datastre
 library(ckanr) # access to CKAN-based open data repositories
 library(tictoc) # compute run time for script execution
 library(readxl) # read XLS files
-library(arcgisbinding) # work with ESRI file formats
 
 ## Load functions --------------------------------------------------------------
 
@@ -61,7 +62,8 @@ spat_check <- function(sf_file) {
 ## 1) Set remote connections  ##
 ################################
 
-# might need authentication ----------------------------------------------------
+# Authentication ---------------------------------------------------------------
+# On first use, user MUST connect prior to running the rest of the script for proper execution
 catalog <- read_sheet("https://docs.google.com/spreadsheets/d/1vUXUDR4I9Ufw11jGbk4nVzgi7mdzj2k0-Oy3Eg8mw4Y/edit?pli=1#gid=0",
                       sheet = 3) # Goes to sheet 3 containing the actual sources and dataset unique IDs
 
@@ -102,7 +104,7 @@ bc_compiled <- read_csv("Code/stream-temp/output/stations.csv")
     select(-Source) %>%
     filter(site_name != "Taite Creek") # This will have to be fixed eventually when recreating the BC compilation
   # Create spatial layer
-  bc_compiled_sf <- st_as_sf(bc_compiled_uid, crs = 4326, coords = c("longitude","latitude"))
+  bc_compiled_sf <- st_as_sf(bc_compiled_uid, crs = 4326, coords = c("longitude","latitude"), remove = T)
 
 
 # Prepare Hakai monitoring sites -----------------------------------------------
@@ -124,7 +126,7 @@ hakai <- read_csv("01_RAW_DATA/Hakai/kwakstationscoords_v2.csv")
            longitude = long) %>% # This mutate should be a rename; more logical
     select(-c(stations, stream_temp, stage, conductivity, data_package, comments, lat, long))
   
-  hakai_sf <- st_as_sf(hakai_format, crs = 4326, coords = c("longitude", "latitude"))
+  hakai_sf <- st_as_sf(hakai_format, crs = 4326, coords = c("longitude", "latitude"), remove = T)
 
 # Prepare UNBC monitoring sites (Stephen Déry) ---------------------------------
 # From downloaded file for now, but should be from Zenodo URL and load in session
@@ -159,54 +161,59 @@ unbc_loc <- as.data.frame(unbc_dery_metadata[grep('^Metadata:.*', unbc_dery_meta
   unbc_join <- bind_cols(unbc_code, unbc_name, unbc_coord) %>%
     mutate(dataset_unique_identifier = "SWP_DTS_A051")
   # Create spatial layer
-  unbc_sf <- st_as_sf(unbc_join, crs = 4326, coords = c("longitude", "latitude"))
+  unbc_sf <- st_as_sf(unbc_join, crs = 4326, coords = c("longitude", "latitude"), remove = T)
 
 
 # Prepare DFO CoSMO monitoring sites -------------------------------------------
 # Make sure that the DS api token is loaded
 cosmo <- ds_locations(ds_api_token,
                       filter =  c("DOI='10.25976/0gvo-9d12'"),
-                      select = c('Name', 'NameId', 'Latitude', 'Longitude')) %>%
-    rename(site_name = Name, site_uid = NameId, latitude = Latitude, longitude = Longitude) %>%
-    mutate(dataset_unique_identifier = "SWP_DTS_A022")
+                      select = c('Name', 'Id', 'Latitude', 'Longitude')) %>%
+    rename(site_name = Name, site_uid = Id, latitude = Latitude, longitude = Longitude) %>%
+    mutate(dataset_unique_identifier = "SWP_DTS_A022",
+           site_uid = as.character(site_uid))
   
-  cosmo_sf <- st_as_sf(cosmo, crs = 4326, coords = c("longitude", "latitude"))
+  cosmo_sf <- st_as_sf(cosmo, crs = 4326, coords = c("longitude", "latitude"), remove = T)
   
 
 # Prepare Sunshine Coast Streamkeepers monitoring sites ------------------------
 # Make sure that the DS api token is loaded
 scsk <- ds_locations(ds_api_token,
                       filter =  c("DOI='10.25976/ze3e-xf34'"),
-                      select = c('Name', 'NameId', 'Latitude', 'Longitude')) %>%
-    rename(site_name = Name, site_uid = NameId, latitude = Latitude, longitude = Longitude) %>%
-    mutate(dataset_unique_identifier = "SWP_DTS_A147")
+                      select = c('Name', 'Id', 'Latitude', 'Longitude')) %>%
+    rename(site_name = Name, site_uid = Id, latitude = Latitude, longitude = Longitude) %>%
+    mutate(dataset_unique_identifier = "SWP_DTS_A147",
+           site_uid = as.character(site_uid))
   
-  scsk_sf <- st_as_sf(scsk, crs = 4326, coords = c("longitude", "latitude"))
+  scsk_sf <- st_as_sf(scsk, crs = 4326, coords = c("longitude", "latitude"), remove = T)
   
   
 # Prepare Resilient Waters monitoring sites ------------------------------------
 # Make sure that the DS api token is loaded
 res_waters <- ds_locations(ds_api_token,
                            filter = c("DOI='10.25976/vdu8-o597'"),
-                           select = c('Name', 'NameId', 'Latitude', 'Longitude')) %>%
-    rename(site_name = Name, site_uid = NameId, latitude = Latitude, longitude = Longitude) %>%
-    mutate(dataset_unique_identifier = "SWP_DTS_A002")
+                           select = c('Name', 'Id', 'Latitude', 'Longitude')) %>%
+    rename(site_name = Name, site_uid = Id, latitude = Latitude, longitude = Longitude) %>%
+    mutate(dataset_unique_identifier = "SWP_DTS_A002",
+           site_uid = as.character(site_uid))
 
-  res_waters_sf <- st_as_sf(res_waters, crs = 4326, coords = c("longitude", "latitude"))
+  res_waters_sf <- st_as_sf(res_waters, crs = 4326, coords = c("longitude", "latitude"), remove = T)
   
 
 # Prepare Peninsula Streams Society monitoring sites ---------------------------
 # Make sure that the DS api token is loaded
 pss <- ds_locations(ds_api_token,
                     filter = c("DOI='10.25976/v87k-2m08"),
-                    select = c('Name', 'NameId', 'Latitude', 'Longitude')) %>%
-    rename(site_name = Name, site_uid = NameId, latitude = Latitude, longitude = Longitude) %>%
-    mutate(dataset_unique_identifier = "SWP_DTS_A153")
+                    select = c('Name', 'Id', 'Latitude', 'Longitude')) %>%
+    rename(site_name = Name, site_uid = Id, latitude = Latitude, longitude = Longitude) %>%
+    mutate(dataset_unique_identifier = "SWP_DTS_A153",
+           site_uid = as.character(site_uid))
 
-  pss_sf <- st_as_sf(pss, crs = 4326, coords = c('longitude', 'latitude'))
+  pss_sf <- st_as_sf(pss, crs = 4326, coords = c('longitude', 'latitude'), remove = T)
 
 
 # Prepare DFO/SKT Upper Bulkley monitoring sites -------------------------------
+# This will be updated eventually for a direct access via CKAN
 skt_url <- "https://maps.skeenasalmon.info/geoserver/ows?service=WFS&version=1.0.0&request=GetFeature&typename=geonode%3Amonitoring_sites_ubr_ubr_2018_10_02&outputFormat=csv&srs=EPSG%3A4326"
   
   # Store in temporary directory/file (only available during session)
@@ -221,7 +228,7 @@ skt_url <- "https://maps.skeenasalmon.info/geoserver/ows?service=WFS&version=1.0
     rename(site_name = STATION_NA, site_uid = FID, latitude = LATITUDE, longitude = LONGITUDE) %>%
     mutate(dataset_unique_identifier = "SWP_DTS_A003")
   
-  skt_ub_sf <- st_as_sf(skt_ub, crs = 4326, coords = c('longitude', 'latitude'))
+  skt_ub_sf <- st_as_sf(skt_ub, crs = 4326, coords = c('longitude', 'latitude'), remove = T)
     
 
 # Prepare Salmo WSS monitoring sites -------------------------------------------
@@ -241,7 +248,7 @@ skt_url <- "https://maps.skeenasalmon.info/geoserver/ows?service=WFS&version=1.0
     relocate(site_uid, site_name, latitude, longitude) %>%
     mutate(dataset_unique_identifier = "SWP_DTS_A057")
   
-  swss_erie_site_sf <- st_as_sf(swss_erie_site, crs = 4326, coords = c('longitude', 'latitude'))
+  swss_erie_site_sf <- st_as_sf(swss_erie_site, crs = 4326, coords = c('longitude', 'latitude'), remove = T)
   
   # Clearwater creek (upper and lower)
   # Get the CKAN resource
@@ -261,7 +268,7 @@ skt_url <- "https://maps.skeenasalmon.info/geoserver/ows?service=WFS&version=1.0
     relocate(site_uid, site_name, latitude, longitude) %>%
     mutate(dataset_unique_identifier = "SWP_DTS_A061")
     
-  swss_clearwater_site_sf <- st_as_sf(swss_clearwater_site, crs = 4326, coords = c('longitude', 'latitude'))
+  swss_clearwater_site_sf <- st_as_sf(swss_clearwater_site, crs = 4326, coords = c('longitude', 'latitude'), remove = T)
   
   # Qua creek (upper and lower)
   # Get the CKAN resource
@@ -282,7 +289,7 @@ skt_url <- "https://maps.skeenasalmon.info/geoserver/ows?service=WFS&version=1.0
     relocate(site_uid, site_name, latitude, longitude) %>%
     mutate(dataset_unique_identifier = "SWP_DTS_A058")
   
-  swss_qua_site_sf <- st_as_sf(swss_qua_site, crs = 4326, coords = c('longitude', 'latitude'))
+  swss_qua_site_sf <- st_as_sf(swss_qua_site, crs = 4326, coords = c('longitude', 'latitude'), remove = T)
   
   # Hidden creek (upper and lower)
   # Get the CKAN resource
@@ -304,7 +311,7 @@ skt_url <- "https://maps.skeenasalmon.info/geoserver/ows?service=WFS&version=1.0
     relocate(site_uid, site_name, latitude, longitude) %>%
     mutate(dataset_unique_identifier = "SWP_DTS_A059")
   
-  swss_hidden_site_sf <- st_as_sf(swss_hidden_site, crs = 4326, coords = c('longitude', 'latitude'))
+  swss_hidden_site_sf <- st_as_sf(swss_hidden_site, crs = 4326, coords = c('longitude', 'latitude'), remove = T)
 
   # Curtis creek (upper and lower)
   # Get the CKAN resource
@@ -325,7 +332,7 @@ skt_url <- "https://maps.skeenasalmon.info/geoserver/ows?service=WFS&version=1.0
     relocate(site_uid, site_name, latitude, longitude) %>%
     mutate(dataset_unique_identifier = "SWP_DTS_A060")
   
-  swss_curtis_site_sf <- st_as_sf(swss_curtis_site, crs = 4326, coords = c('longitude', 'latitude'))
+  swss_curtis_site_sf <- st_as_sf(swss_curtis_site, crs = 4326, coords = c('longitude', 'latitude'), remove = T)
   
   # South Salmo creek (upper and lower)
   # Get the CKAN resource
@@ -346,7 +353,7 @@ skt_url <- "https://maps.skeenasalmon.info/geoserver/ows?service=WFS&version=1.0
     relocate(site_uid, site_name, latitude, longitude) %>%
     mutate(dataset_unique_identifier = "SWP_DTS_A104")
   
-  swss_salmo_site_sf <- st_as_sf(swss_salmo_site, crs = 4326, coords = c('longitude', 'latitude'))
+  swss_salmo_site_sf <- st_as_sf(swss_salmo_site, crs = 4326, coords = c('longitude', 'latitude'), remove = T)
   
   # Sheep creek (upper and lower)
   # Get the CKAN resource
@@ -365,16 +372,19 @@ skt_url <- "https://maps.skeenasalmon.info/geoserver/ows?service=WFS&version=1.0
     )) %>%
     rename(site_name = site_id) %>%
     relocate(site_uid, site_name, latitude, longitude) %>%
-    mutate(longitude = str_trim(longitude, side = "left")) %>% 
-    mutate(dataset_unique_identifier = "SWP_DTS_A134")
+    mutate(longitude = str_trim(longitude, side = "left"),
+           dataset_unique_identifier = "SWP_DTS_A134")
   
-  swss_sheep_site_sf <- st_as_sf(swss_sheep_site, crs = 4326, coords = c('longitude', 'latitude'))
+  swss_sheep_site_sf <- st_as_sf(swss_sheep_site, crs = 4326, coords = c('longitude', 'latitude'), remove = T)
+  
+  # Merge all monitoring sites together
+  swss_all_sites_sf <- bind_rows(swss_sheep_site_sf, swss_salmo_site_sf, swss_curtis_site_sf,
+                                 swss_hidden_site_sf, swss_qua_site_sf, swss_clearwater_site_sf,
+                                 swss_erie_site_sf)
 
 
-# Prepare Rossland Streamkeepers monitoring sites --------------------------------------
+# Prepare Rossland Streamkeepers monitoring sites ------------------------------
 # Those seven sites below can be merged if necessary, but they are separate entries in the catalog
-# Connects to Columbia Basin Data Hub
-cbdh <- ckanr_setup("https://data.cbwaterhub.ca/") # No need for a key here  
   
   # Golpher Creek
   # Get the CKAN resource
@@ -388,9 +398,9 @@ cbdh <- ckanr_setup("https://data.cbwaterhub.ca/") # No need for a key here
     slice(1) %>% # keep only the first record of each group
     select(site_id, latitude, longitude) %>%
     rename(site_name = site_id) %>%
-    mutate(site_uid = "ross_1") %>% 
-    mutate(dataset_unique_identifier = "SWP_DTS_A052")
-  
+    mutate(site_uid = "ross_1",
+           dataset_unique_identifier = "SWP_DTS_A052")
+   
   ross_golpher_site_sf <- st_as_sf(ross_golpher_site, crs = 4326, coords = c('longitude', 'latitude'), remove = T)
   
   # Centennial wetland
@@ -405,8 +415,8 @@ cbdh <- ckanr_setup("https://data.cbwaterhub.ca/") # No need for a key here
     slice(1) %>% # keep only the first record of each group
     select(site_id, latitude, longitude) %>%
     rename(site_name = site_id) %>%
-    mutate(site_uid = "ross_2") %>% 
-    mutate(dataset_unique_identifier = "SWP_DTS_A053")
+    mutate(site_uid = "ross_2",
+           dataset_unique_identifier = "SWP_DTS_A053")
   
   ross_cent_site_sf <- st_as_sf(ross_cent_site, crs = 4326, coords = c('longitude', 'latitude'), remove = T)
   
@@ -422,8 +432,8 @@ cbdh <- ckanr_setup("https://data.cbwaterhub.ca/") # No need for a key here
     slice(1) %>% # keep only the first record of each group
     select(site_id, latitude, longitude) %>%
     rename(site_name = site_id) %>%
-    mutate(site_uid = "ross_3") %>% 
-    mutate(dataset_unique_identifier = "SWP_DTS_A054")
+    mutate(site_uid = "ross_3",
+           dataset_unique_identifier = "SWP_DTS_A054")
   
   ross_tiger_site_sf <- st_as_sf(ross_tiger_site, crs = 4326, coords = c('longitude', 'latitude'), remove = T)
   
@@ -439,8 +449,8 @@ cbdh <- ckanr_setup("https://data.cbwaterhub.ca/") # No need for a key here
     slice(1) %>% # keep only the first record of each group
     select(site_id, latitude, longitude) %>%
     rename(site_name = site_id) %>%
-    mutate(site_uid = "ross_4") %>% 
-    mutate(dataset_unique_identifier = "SWP_DTS_A056")
+    mutate(site_uid = "ross_4",
+           dataset_unique_identifier = "SWP_DTS_A056")
   
   ross_milk_site_sf <- st_as_sf(ross_milk_site, crs = 4326, coords = c('longitude', 'latitude'), remove = T)
   
@@ -456,8 +466,8 @@ cbdh <- ckanr_setup("https://data.cbwaterhub.ca/") # No need for a key here
     slice(1) %>% # keep only the first record of each group
     select(site_id, latitude, longitude) %>%
     rename(site_name = site_id) %>%
-    mutate(site_uid = "ross_5") %>% 
-    mutate(dataset_unique_identifier = "SWP_DTS_A062")
+    mutate(site_uid = "ross_5",
+           dataset_unique_identifier = "SWP_DTS_A062")
   
   ross_topp_site_sf <- st_as_sf(ross_topp_site, crs = 4326, coords = c('longitude', 'latitude'), remove = T)
   
@@ -473,8 +483,8 @@ cbdh <- ckanr_setup("https://data.cbwaterhub.ca/") # No need for a key here
     slice(1) %>% # keep only the first record of each group
     select(site_id, latitude, longitude) %>%
     rename(site_name = site_id) %>%
-    mutate(site_uid = "ross_6") %>% 
-    mutate(dataset_unique_identifier = "SWP_DTS_A063")
+    mutate(site_uid = "ross_6",
+           dataset_unique_identifier = "SWP_DTS_A063") 
   
   ross_ceme_site_sf <- st_as_sf(ross_ceme_site, crs = 4326, coords = c('longitude', 'latitude'), remove = T)
   
@@ -490,8 +500,8 @@ cbdh <- ckanr_setup("https://data.cbwaterhub.ca/") # No need for a key here
     slice(1) %>% # keep only the first record of each group
     select(site_id, latitude, longitude) %>%
     rename(site_name = site_id) %>%
-    mutate(site_uid = "ross_7") %>% 
-    mutate(dataset_unique_identifier = "SWP_DTS_A064")
+    mutate(site_uid = "ross_7",
+           dataset_unique_identifier = "SWP_DTS_A064") 
   
   ross_warf_site_sf <- st_as_sf(ross_warf_site, crs = 4326, coords = c('longitude', 'latitude'), remove = T)
   
@@ -507,8 +517,8 @@ cbdh <- ckanr_setup("https://data.cbwaterhub.ca/") # No need for a key here
     slice(1) %>% # keep only the first record of each group
     select(site_id, latitude, longitude) %>%
     rename(site_name = site_id) %>%
-    mutate(site_uid = "ross_8") %>% 
-    mutate(dataset_unique_identifier = "SWP_DTS_A065")
+    mutate(site_uid = "ross_8",
+           dataset_unique_identifier = "SWP_DTS_A065") 
   
   ross_fala_site_sf <- st_as_sf(ross_fala_site, crs = 4326, coords = c('longitude', 'latitude'), remove = T)
   
@@ -524,8 +534,8 @@ cbdh <- ckanr_setup("https://data.cbwaterhub.ca/") # No need for a key here
     slice(1) %>% # keep only the first record of each group
     select(site_id, latitude, longitude) %>%
     rename(site_name = site_id) %>%
-    mutate(site_uid = "ross_9") %>% 
-    mutate(dataset_unique_identifier = "SWP_DTS_A066")
+    mutate(site_uid = "ross_9",
+           dataset_unique_identifier = "SWP_DTS_A066")
   
   ross_hale_site_sf <- st_as_sf(ross_hale_site, crs = 4326, coords = c('longitude', 'latitude'), remove = T)
   
@@ -547,7 +557,14 @@ cbdh <- ckanr_setup("https://data.cbwaterhub.ca/") # No need for a key here
   
   # ross_camb_site_sf <- st_as_sf(ross_camb_site, crs = 4326, coords = c('longitude', 'latitude'), remove = T)
   
-# Prepare DFO Pacfish sites -----------------------------------------------
+  # Merge all Rossland Streamkeepers monitoring sites together
+  ross_all_sites_sf <- bind_rows(ross_hale_site_sf, ross_ceme_site_sf,
+                                 ross_cent_site_sf, ross_fala_site_sf,
+                                 ross_golpher_site_sf, ross_milk_site_sf, 
+                                 ross_tiger_site_sf, ross_topp_site_sf, 
+                                 ross_warf_site_sf)
+  
+# Prepare DFO Pacfish sites ----------------------------------------------------
 # Note that these spatial locations are not accurate and were retrieved from the website's map
 # Check map here: http://www.pacfish.ca/wcviweather/
 pacfish_sites <- st_read("02_PROCESSED_DATA/DFO_PacFish/Hydromets.shp")
@@ -561,8 +578,8 @@ pacfish_sites <- st_read("02_PROCESSED_DATA/DFO_PacFish/Hydromets.shp")
     mutate(dataset_unique_identifier = "SWP_DTS_A154")
 
   
-# Prepare Kitasoo monitoring sites ----------------------------------------
-# These sites were provided by the Nation
+# Prepare Kitasoo monitoring sites ---------------------------------------------
+# Physical file provided by the Nation
 kitasoo <- read_csv("02_PROCESSED_DATA/CCIRA_Kitasoo/Locations_Hobo_Tidbit_Loggers.csv")
   
   # Format sites
@@ -573,30 +590,32 @@ kitasoo <- read_csv("02_PROCESSED_DATA/CCIRA_Kitasoo/Locations_Hobo_Tidbit_Logge
     mutate(site_uid = paste0("kit_", as.character(row_number()))) %>%
     mutate(dataset_unique_identifier = "SWP_DTS_A049")
   
-  kitasoo_sites_sf <- st_as_sf(kitasoo_sites, crs = 4326, coords = c('longitude', 'latitude'))
+  kitasoo_sites_sf <- st_as_sf(kitasoo_sites, crs = 4326, coords = c('longitude', 'latitude'), remove = T)
   
 
-# Prepare Skeena Fisheries Commission monitoring sites --------------------
+# Prepare Skeena Fisheries Commission monitoring sites -------------------------
+# Physical file provided by the Nation
 GWA_SFC <- read_sf("01_RAW_DATA/Skeena_Fisheries/SFC and GWA Temp Site Metadata for PSF.csv")
   
   # Format sites
   GWA_SFC_sites <- GWA_SFC %>%
     select(SiteID, `UTM Zone`, `UTM Easting`, `UTM Northing`) %>%
-    mutate(Easting = as.numeric(`UTM Easting`)) %>%
-    mutate(Northing = as.numeric(`UTM Northing`)) %>%
+    mutate(Easting = as.numeric(`UTM Easting`),
+           Northing = as.numeric(`UTM Northing`)) %>%
     filter(!is.na(Northing)) %>%
-    mutate(site_name =  SiteID) %>%
+    mutate(site_name =  SiteID,
+           dataset_unique_identifier = "SWP_DTS_A149") %>%
     rename(site_uid = SiteID) %>%
-    mutate(dataset_unique_identifier = "SWP_DTS_A149")
+    select(-c(`UTM Easting`, `UTM Northing`, `UTM Zone`))
   
   GWA_SFC_sites_sf <- st_as_sf(GWA_SFC_sites, 
                                crs = 32609, # UTM 9N
                                coords = c('Easting', 'Northing')) %>%
-    select(-c('UTM Zone', 'UTM Easting', 'UTM Northing')) %>%
     st_transform(crs = 4326)
 
 
-# Prepare Shuswap Fisheries Commission monitoring sites -------------------
+# Prepare Shuswap Fisheries Commission monitoring sites ------------------------
+# Physical file provided by the Nation
 shushwap <- read_sf("01_RAW_DATA/ShuswapFisheriesCommission/Shuswap_Tw_Monitoring_Sites.shp")
   
   # Format sites
@@ -607,7 +626,7 @@ shushwap <- read_sf("01_RAW_DATA/ShuswapFisheriesCommission/Shuswap_Tw_Monitorin
     mutate(dataset_unique_identifier = "SWP_DTS_A155")
     
 
-# Prepare Salmon Watershed Lab (SFU) monitoring sites ---------------------
+# Prepare Salmon Watershed Lab (SFU) monitoring sites --------------------------
 sfu_swl <- read_csv("01_RAW_DATA/SalmonWatershedLab_SFU/nicola_sites_for_PSF.csv")
 
   # Format sites
@@ -617,12 +636,13 @@ sfu_swl <- read_csv("01_RAW_DATA/SalmonWatershedLab_SFU/nicola_sites_for_PSF.csv
            latitude = str_sub(lat, end = -3), # Decrease precision of location to prevent vandalism
            longitude = str_sub(long, end = -3), # Decrease precision of location to prevent vandalism
            dataset_unique_identifier = "SWP_DTS_A148") %>%
-    select(site_id, site_name, latitude, longitude, dataset_unique_identifier)
+    select(site_uid, site_name, latitude, longitude, dataset_unique_identifier)
   
-  sfu_swl_sites_sf <- st_as_sf(sfu_swl_sites, crs = 4326, coords = c("longitude", "latitude"))
+  sfu_swl_sites_sf <- st_as_sf(sfu_swl_sites, crs = 4326, coords = c("longitude", "latitude"), remove = T)
   
 
-# Prepare Dan Moore's UBC monitoring sites --------------------------------
+# Prepare Dan Moore's UBC monitoring sites -------------------------------------
+# Physical file provided by the lab
 ubc_moore <- read_csv("01_RAW_DATA/UBC_DanMoore/sites_coords_elevs.csv")
 
   # Format sites
@@ -630,15 +650,14 @@ ubc_moore <- read_csv("01_RAW_DATA/UBC_DanMoore/sites_coords_elevs.csv")
     mutate(site_uid = id,
            site_name = id,
            dataset_unique_identifier = "SWP_DTS_A150") %>%
-    select(site_id, site_name, lat, lon, dataset_unique_identifier)
+    select(site_uid, site_name, lat, lon, dataset_unique_identifier)
   
-  ubc_moore_sites_sf <- st_as_sf(ubc_moore_sites, crs = 4326, coords = c("lon", "lat"))
+  ubc_moore_sites_sf <- st_as_sf(ubc_moore_sites, crs = 4326, coords = c("lon", "lat"), remove = T)
+  
 
 # Prepare Living Lakes High Elevation Monitoring Program monitoring sites ------
-# Those seven sites below can be merged if necessary, but they are separate entries in the catalog
-# Connects to Columbia Basin Data Hub
-cbdh <- ckanr_setup("https://data.cbwaterhub.ca/") # No need for a key here
-  
+# Those sites below can be merged if necessary, but they are separate entries in the catalog
+
   # Upper Joker Lake
   # Get the CKAN resource
   llc_ujl <- resource_show(id = "c1971837-4beb-4284-8b4e-e1b1dae6d2e1", # Upper Joker Lake 
@@ -649,12 +668,12 @@ cbdh <- ckanr_setup("https://data.cbwaterhub.ca/") # No need for a key here
   llc_ujl_site <- fetch_llc_ujl %>%
     first() %>% # Only need the first record to get coordinates
     select(site_id, latitude, longitude) %>%
-    mutate(site_uid = "llc_hemp_1") %>% # llc for Living Lakes Canada; nk for North Kootenay
+    mutate(site_uid = "llc_hemp_1") %>%
     rename(site_name = site_id) %>%
     relocate(site_uid, site_name, latitude, longitude) %>%
     mutate(dataset_unique_identifier = "SWP_DTS_A108")
   
-  llc_ujl_site_sf <- st_as_sf(llc_ujl_site, crs = 4326, coords = c('longitude', 'latitude'))
+  llc_ujl_site_sf <- st_as_sf(llc_ujl_site, crs = 4326, coords = c('longitude', 'latitude'), remove = T)
   
   # Sapphire Lake
   # Get the CKAN resource
@@ -666,17 +685,18 @@ cbdh <- ckanr_setup("https://data.cbwaterhub.ca/") # No need for a key here
   llc_sap_site <- fetch_llc_sap %>%
     first() %>% # Only need the first record to get coordinates
     select(site_id, latitude, longitude) %>%
-    mutate(site_uid = "llc_hemp_2") %>% # llc for Living Lakes Canada; nk for North Kootenay
+    mutate(site_uid = "llc_hemp_2") %>%
     rename(site_name = site_id) %>%
     relocate(site_uid, site_name, latitude, longitude) %>%
     mutate(dataset_unique_identifier = "SWP_DTS_A132")
   
-  llc_sap_site_sf <- st_as_sf(llc_sap_site, crs = 4326, coords = c('longitude', 'latitude'))
+  llc_sap_site_sf <- st_as_sf(llc_sap_site, crs = 4326, coords = c('longitude', 'latitude'), remove = T)
   
-# Prepare Living Lakes North Kootenay Lake monitoring sites ------------------
-# Those seven sites below can be merged if necessary, but they are separate entries in the catalog
-# Connects to Columbia Basin Data Hub
-cbdh <- ckanr_setup("https://data.cbwaterhub.ca/") # No need for a key here
+  # Merge all monitoring sites together
+  llchem_all_sites_sf <- bind_rows(llc_ujl_site_sf, llc_sap_site_sf)
+  
+# Prepare Living Lakes North Kootenay Lake monitoring sites --------------------
+# Those sites below can be merged if necessary, but they are separate entries in the catalog
   
   # Carlyle Creek
   # Get the CKAN resource
@@ -693,7 +713,7 @@ cbdh <- ckanr_setup("https://data.cbwaterhub.ca/") # No need for a key here
     relocate(site_uid, site_name, latitude, longitude) %>%
     mutate(dataset_unique_identifier = "SWP_DTS_A116")
   
-  llc_carlyle_site_sf <- st_as_sf(llc_carlyle_site, crs = 4326, coords = c('longitude', 'latitude'))
+  llc_carlyle_site_sf <- st_as_sf(llc_carlyle_site, crs = 4326, coords = c('longitude', 'latitude'), remove = T)
   
   # Gar Creek
   # Get the CKAN resource
@@ -705,12 +725,12 @@ cbdh <- ckanr_setup("https://data.cbwaterhub.ca/") # No need for a key here
   llc_gar_site <- fetch_llc_gar %>%
     first() %>% # Only need the first record to get coordinates
     select(site_id, latitude, longitude) %>%
-    mutate(site_uid = "llc_nk_2") %>% # llc for Living Lakes Canada; nk for North Kootenay
+    mutate(site_uid = "llc_nk_2") %>%
     rename(site_name = site_id) %>%
     relocate(site_uid, site_name, latitude, longitude) %>%
-    mutate(dataset_unique_identifier = "SWP_DTS_A135")
+    mutate(dataset_unique_identifier = "SWP_DTS_A135") 
   
-  llc_gar_site_sf <- st_as_sf(llc_gar_site, crs = 4326, coords = c('longitude', 'latitude'))
+  llc_gar_site_sf <- st_as_sf(llc_gar_site, crs = 4326, coords = c('longitude', 'latitude'), remove = T)
   
   # MacDonald Creek
   # Get the CKAN resource
@@ -722,12 +742,12 @@ cbdh <- ckanr_setup("https://data.cbwaterhub.ca/") # No need for a key here
   llc_mcdo_site <- fetch_llc_mcdo %>%
     first() %>% # Only need the first record to get coordinates
     select(site_id, latitude, longitude) %>%
-    mutate(site_uid = "llc_nk_3") %>% # llc for Living Lakes Canada; nk for North Kootenay
+    mutate(site_uid = "llc_nk_3") %>%
     rename(site_name = site_id) %>%
     relocate(site_uid, site_name, latitude, longitude) %>%
-    mutate(dataset_unique_identifier = "SWP_DTS_A141")
+    mutate(dataset_unique_identifier = "SWP_DTS_A141") 
   
-  llc_mcdo_site_sf <- st_as_sf(llc_mcdo_site, crs = 4326, coords = c('longitude', 'latitude'))
+  llc_mcdo_site_sf <- st_as_sf(llc_mcdo_site, crs = 4326, coords = c('longitude', 'latitude'), remove = T)
   
   # Davis Creek
   # Get the CKAN resource
@@ -739,12 +759,12 @@ cbdh <- ckanr_setup("https://data.cbwaterhub.ca/") # No need for a key here
   llc_davis_site <- fetch_llc_davis %>%
     first() %>% # Only need the first record to get coordinates
     select(site_id, latitude, longitude) %>%
-    mutate(site_uid = "llc_nk_4") %>% # llc for Living Lakes Canada; nk for North Kootenay
+    mutate(site_uid = "llc_nk_4") %>%
     rename(site_name = site_id) %>%
     relocate(site_uid, site_name, latitude, longitude) %>%
     mutate(dataset_unique_identifier = "SWP_DTS_A143")
   
-  llc_davis_site_sf <- st_as_sf(llc_davis_site, crs = 4326, coords = c('longitude', 'latitude'))
+  llc_davis_site_sf <- st_as_sf(llc_davis_site, crs = 4326, coords = c('longitude', 'latitude'), remove = T)
   
   # Bjerkness Creek
   # Get the CKAN resource
@@ -756,12 +776,12 @@ cbdh <- ckanr_setup("https://data.cbwaterhub.ca/") # No need for a key here
   llc_bjerk_site <- fetch_llc_bjerk %>%
     first() %>% # Only need the first record to get coordinates
     select(site_id, latitude, longitude) %>%
-    mutate(site_uid = "llc_nk_5") %>% # llc for Living Lakes Canada; nk for North Kootenay
+    mutate(site_uid = "llc_nk_5") %>%
     rename(site_name = site_id) %>%
     relocate(site_uid, site_name, latitude, longitude) %>%
     mutate(dataset_unique_identifier = "SWP_DTS_A144")
   
-  llc_bjerk_site_sf <- st_as_sf(llc_bjerk_site, crs = 4326, coords = c('longitude', 'latitude'))
+  llc_bjerk_site_sf <- st_as_sf(llc_bjerk_site, crs = 4326, coords = c('longitude', 'latitude'), remove = T)
   
   # Kootenay Joe Creek
   # Get the CKAN resource
@@ -773,12 +793,12 @@ cbdh <- ckanr_setup("https://data.cbwaterhub.ca/") # No need for a key here
   llc_koot_site <- fetch_llc_koot %>%
     first() %>% # Only need the first record to get coordinates
     select(site_id, latitude, longitude) %>%
-    mutate(site_uid = "llc_nk_6") %>% # llc for Living Lakes Canada; nk for North Kootenay
+    mutate(site_uid = "llc_nk_6") %>%
     rename(site_name = site_id) %>%
     relocate(site_uid, site_name, latitude, longitude) %>%
-    mutate(dataset_unique_identifier = "SWP_DTS_A145")
+    mutate(dataset_unique_identifier = "SWP_DTS_A145") 
   
-  llc_koot_site_sf <- st_as_sf(llc_koot_site, crs = 4326, coords = c('longitude', 'latitude'))
+  llc_koot_site_sf <- st_as_sf(llc_koot_site, crs = 4326, coords = c('longitude', 'latitude'), remove = T)
  
   # Ben Hur Creek
   # Get the CKAN resource
@@ -790,12 +810,17 @@ cbdh <- ckanr_setup("https://data.cbwaterhub.ca/") # No need for a key here
   llc_benh_site <- fetch_llc_benh %>%
     first() %>% # Only need the first record to get coordinates
     select(site_id, latitude, longitude) %>%
-    mutate(site_uid = "llc_nk_7") %>% # llc for Living Lakes Canada; nk for North Kootenay
+    mutate(site_uid = "llc_nk_7") %>%
     rename(site_name = site_id) %>%
     relocate(site_uid, site_name, latitude, longitude) %>%
-    mutate(dataset_unique_identifier = "SWP_DTS_A146")
+    mutate(dataset_unique_identifier = "SWP_DTS_A146") 
   
-  llc_benh_site_sf <- st_as_sf(llc_benh_site, crs = 4326, coords = c('longitude', 'latitude')) 
+  llc_benh_site_sf <- st_as_sf(llc_benh_site, crs = 4326, coords = c('longitude', 'latitude'), remove = T) 
+  
+  # Merge all monitoring sites together
+  llc_all_sites_sf <- bind_rows(llc_benh_site_sf, llc_koot_site_sf, llc_bjerk_site_sf,
+                                llc_davis_site_sf, llc_mcdo_site_sf, llc_gar_site_sf, 
+                                llc_carlyle_site_sf)
 
 # Prepare Kluane Lake monitoring sites ------------------------------------
 # Read downloaded XLSX file
@@ -817,11 +842,11 @@ uofa_kluane <- read_xlsx("01_RAW_DATA/UofA/KluaneMoorings_RawData.xlsx",
            dataset_unique_identifier = "SWP_DTS_A047") %>%
     select(-c(`Mooring name`, `Mooring location`, Empty, Depth_Column))
   
-  uofa_kluane_sites_sf <- st_as_sf(uofa_kluane_sites, crs = 4326, coords = c("longitude", "latitude"))
+  uofa_kluane_sites_sf <- st_as_sf(uofa_kluane_sites, crs = 4326, coords = c("longitude", "latitude"), remove = T)
 
 
-# Prepare UNBC Quesnel River monitoring sites -----------------------------
-# Data initially provided in a MS Word document. 
+# Prepare UNBC Quesnel River monitoring sites ----------------------------------
+# Data initially provided in a MS Word document by researcher 
 # Faster and easier to process the seven sites manually first to create a CSV file to import
 unbc_quesnel <- read_csv("02_PROCESSED_DATA/UNBC_QUESNEL/Site_Locations.csv")
     
@@ -832,10 +857,11 @@ unbc_quesnel <- read_csv("02_PROCESSED_DATA/UNBC_QUESNEL/Site_Locations.csv")
            dataset_unique_identifier = "SWP_DTS_A048") %>%
     select(-c(Name, ID))
   
-  unbc_quesnel_sites_sf <- st_as_sf(unbc_quesnel_sites, crs = 4326, coords = c("Lon", "Lat"))
+  unbc_quesnel_sites_sf <- st_as_sf(unbc_quesnel_sites, crs = 4326, coords = c("Lon", "Lat"), remove = T)
 
   
-# Prepare BCGOV Bevington monitoring sites --------------------------------
+# Prepare BCGOV Bevington monitoring sites -------------------------------------
+# Physical file provided by government researcher
 bcgov_bev <- read_csv("01_RAW_DATA/Gov_BC_AlexBevington/hydrometric_locations_2023.csv")
   
   # Format sites
@@ -845,24 +871,27 @@ bcgov_bev <- read_csv("01_RAW_DATA/Gov_BC_AlexBevington/hydrometric_locations_20
     mutate(dataset_unique_identifier = "SWP_DTS_A151") %>%
     select(-Z)
   
-  bcgov_bev_sites_sf <- st_as_sf(bcgov_bev_sites, crs = 4326, coords = c("LON", "LAT"))
+  bcgov_bev_sites_sf <- st_as_sf(bcgov_bev_sites, crs = 4326, coords = c("LON", "LAT"), remove = T)
   
 
-# Prepare DFO Somass monitoring sites -------------------------------------
+# Prepare DFO Somass monitoring sites ------------------------------------------
+# Physical file provided by government researcher
 dfo_somass <- read_sf("02_PROCESSED_DATA/DFO_HowardStiff/Somass_Tw_Locations_DFO.shp")
   
   # Format sites
   dfo_somass_sites <- dfo_somass %>%
     rename(site_name = Gauge_Name,
            site_uid = Gauge_ID) %>%
-    mutate(dataset_unique_identifier = "SWP_DTS_A158")
+    mutate(dataset_unique_identifier = "SWP_DTS_A158") %>%
+    select(-id)
   
-  dfo_somass_sites_sf <- st_transform(dfo_somass_sites, crs = 4326)
+  dfo_somass_sites_sf <- st_transform(dfo_somass_sites, crs = 4326, remove = T)
   
-# Prepare DFO Yukon monitoring sites -------------------------------------
+  
+# Prepare DFO Yukon monitoring sites -------------------------------------------
 # Sites are being reviewed/retrieved by team in Whitehorse
 # This version only has the sites for which I have good confidence
-# csv file was prepared based on package of files provided
+# csv file was prepared based on package of files provided by DFO
 dfo_yukon <- read_csv("02_PROCESSED_DATA/DFO_Whitehorse/DFO_YY_Tw_Locations.csv")
   
   # Format sites
@@ -872,7 +901,8 @@ dfo_yukon <- read_csv("02_PROCESSED_DATA/DFO_Whitehorse/DFO_YY_Tw_Locations.csv"
   dfo_yukon_sites_sf <- st_as_sf(dfo_yukon_sites, crs = 4326, coords = c("lon", "lat"), remove = T)
   
 
-# Prepare Reynolds Lab monitoring sites -----------------------------------
+# Prepare Reynolds Lab monitoring sites ----------------------------------------
+# Physical file created by myself using multiple data files provided by the lab
 sfu_reynolds <- read_csv("02_PROCESSED_DATA/Reynolds_Lab_SFU/ReynoldsLab_MonitoringSites.csv")
   
   # Format sites
@@ -885,26 +915,25 @@ sfu_reynolds <- read_csv("02_PROCESSED_DATA/Reynolds_Lab_SFU/ReynoldsLab_Monitor
     st_transform(crs = 4326)
 
 
-# Prepare Elk River Alliance monitoring sites -----
-# Those seven sites below can be merged if necessary, but they are separate entries in the catalog
-# Connects to Columbia Basin Data Hub
-cbdh <- ckanr_setup("https://data.cbwaterhub.ca/") # No need for a key here
-  
+# Prepare Elk River Alliance monitoring sites ----------------------------------
+# Those sites below can be merged if necessary, but they are separate entries in the catalog
+
   # Wilson Creek 1
   # Get the CKAN resource
   era_wil1 <- resource_show(id = "7316923c-8223-4d4e-8b4f-9b2a0a4575ba",  
                            as = "table")
   # Download the file into the current session
-  fetch_era_wil1 <- ckan_fetch(era_wils$url, "session", format = ".csv")
+  fetch_era_wil1 <- ckan_fetch(era_wil1$url, "session", format = ".csv")
   # Format file
   era_wil1_site <- fetch_era_wil1 %>%
     first() %>% # Only need the first record to get coordinates
     select(site_id, latitude, longitude) %>%
-    mutate(site_uid = site_id) %>% # llc for Living Lakes Canada; nk for North Kootenay
-    mutate(site_name = "Wilson Creek 1",
-           dataset_unique_identifier = "SWP_DTS_A076")
+    mutate(site_uid = site_id,
+           site_name = "Wilson Creek 1",
+           dataset_unique_identifier = "SWP_DTS_A076") %>%
+    select(-site_id)
   
-  era_wil1_site_sf <- st_as_sf(era_wil1_site, crs = 4326, coords = c('longitude', 'latitude'))
+  era_wil1_site_sf <- st_as_sf(era_wil1_site, crs = 4326, coords = c('longitude', 'latitude'), remove = T)
   
   # Lizard Creek 6
   # Get the CKAN resource
@@ -916,27 +945,29 @@ cbdh <- ckanr_setup("https://data.cbwaterhub.ca/") # No need for a key here
   era_liz6_site <- fetch_era_liz6 %>%
     first() %>% # Only need the first record to get coordinates
     select(site_id, latitude, longitude) %>%
-    mutate(site_uid = site_id) %>% # llc for Living Lakes Canada; nk for North Kootenay
-    mutate(site_name = "Liza Creek 6",
-           dataset_unique_identifier = "SWP_DTS_A077")
+    mutate(site_uid = site_id,
+           site_name = "Liza Creek 6",
+           dataset_unique_identifier = "SWP_DTS_A077") %>%
+    select(-site_id)
   
-  era_liz6_site_sf <- st_as_sf(era_liz6_site, crs = 4326, coords = c('longitude', 'latitude'))
+  era_liz6_site_sf <- st_as_sf(era_liz6_site, crs = 4326, coords = c('longitude', 'latitude'), remove = T)
   
   # Lizard Creek 5
   # Get the CKAN resource
   era_liz5 <- resource_show(id = "91e6da27-7bb5-4e3b-a12e-6fc5c56fbe4d",  
                             as = "table")
   # Download the file into the current session
-  fetch_era_liz5 <- ckan_fetch(era_liza$url, "session", format = ".csv")
+  fetch_era_liz5 <- ckan_fetch(era_liz5$url, "session", format = ".csv")
   # Format file
   era_liz5_site <- fetch_era_liz5 %>%
     first() %>% # Only need the first record to get coordinates
     select(site_id, latitude, longitude) %>%
-    mutate(site_uid = site_id) %>% # llc for Living Lakes Canada; nk for North Kootenay
-    mutate(site_name = "Liza Creek 5",
-           dataset_unique_identifier = "SWP_DTS_A078")
+    mutate(site_uid = site_id,
+           site_name = "Liza Creek 5",
+           dataset_unique_identifier = "SWP_DTS_A078") %>%
+    select(-site_id)
   
-  era_liz5_site_sf <- st_as_sf(era_liz5_site, crs = 4326, coords = c('longitude', 'latitude'))
+  era_liz5_site_sf <- st_as_sf(era_liz5_site, crs = 4326, coords = c('longitude', 'latitude'), remove = T)
   
   # Elk River 1
   # Get the CKAN resource
@@ -948,11 +979,12 @@ cbdh <- ckanr_setup("https://data.cbwaterhub.ca/") # No need for a key here
   era_elk1_site <- fetch_era_elk1 %>%
     first() %>% # Only need the first record to get coordinates
     select(site_id, latitude, longitude) %>%
-    mutate(site_uid = site_id) %>% # llc for Living Lakes Canada; nk for North Kootenay
-    mutate(site_name = "Elk River 1",
-           dataset_unique_identifier = "SWP_DTS_A080")
+    mutate(site_uid = site_id,
+           site_name = "Elk River 1",
+           dataset_unique_identifier = "SWP_DTS_A080") %>%
+    select(-site_id)
   
-  era_elk1_site_sf <- st_as_sf(era_elk1_site, crs = 4326, coords = c('longitude', 'latitude'))
+  era_elk1_site_sf <- st_as_sf(era_elk1_site, crs = 4326, coords = c('longitude', 'latitude'), remove = T)
   
   # Elk River 2
   # Get the CKAN resource
@@ -964,11 +996,12 @@ cbdh <- ckanr_setup("https://data.cbwaterhub.ca/") # No need for a key here
   era_elk2_site <- fetch_era_elk2 %>%
     first() %>% # Only need the first record to get coordinates
     select(site_id, latitude, longitude) %>%
-    mutate(site_uid = site_id) %>% # llc for Living Lakes Canada; nk for North Kootenay
-    mutate(site_name = "Elk River 2",
-           dataset_unique_identifier = "SWP_DTS_A085")
+    mutate(site_uid = site_id,
+           site_name = "Elk River 2",
+           dataset_unique_identifier = "SWP_DTS_A085") %>%
+    select(-site_id)
   
-  era_elk2_site_sf <- st_as_sf(era_elk2_site, crs = 4326, coords = c('longitude', 'latitude'))
+  era_elk2_site_sf <- st_as_sf(era_elk2_site, crs = 4326, coords = c('longitude', 'latitude'), remove = T)
   
   # Michel Creek 3
   # Get the CKAN resource
@@ -980,11 +1013,12 @@ cbdh <- ckanr_setup("https://data.cbwaterhub.ca/") # No need for a key here
   era_mic3_site <- fetch_era_mic3 %>%
     first() %>% # Only need the first record to get coordinates
     select(site_id, latitude, longitude) %>%
-    mutate(site_uid = site_id) %>% # llc for Living Lakes Canada; nk for North Kootenay
-    mutate(site_name = "Michel Creek 3",
-           dataset_unique_identifier = "SWP_DTS_A082")
+    mutate(site_uid = site_id,
+           site_name = "Michel Creek 3",
+           dataset_unique_identifier = "SWP_DTS_A082") %>%
+    select(-site_id)
   
-  era_mic3_site_sf <- st_as_sf(era_mic3_site, crs = 4326, coords = c('longitude', 'latitude'))
+  era_mic3_site_sf <- st_as_sf(era_mic3_site, crs = 4326, coords = c('longitude', 'latitude'), remove = T)
   
   # Michel Creek 2
   # Get the CKAN resource
@@ -996,11 +1030,12 @@ cbdh <- ckanr_setup("https://data.cbwaterhub.ca/") # No need for a key here
   era_mic2_site <- fetch_era_mic2 %>%
     first() %>% # Only need the first record to get coordinates
     select(site_id, latitude, longitude) %>%
-    mutate(site_uid = site_id) %>% # llc for Living Lakes Canada; nk for North Kootenay
-    mutate(site_name = "Michel Creek 2",
-           dataset_unique_identifier = "SWP_DTS_A083")
+    mutate(site_uid = site_id,
+           site_name = "Michel Creek 2",
+           dataset_unique_identifier = "SWP_DTS_A083") %>%
+    select(-site_id)
   
-  era_mic2_site_sf <- st_as_sf(era_mic2_site, crs = 4326, coords = c('longitude', 'latitude'))
+  era_mic2_site_sf <- st_as_sf(era_mic2_site, crs = 4326, coords = c('longitude', 'latitude'), remove = T)
   
   # Michel Creek 1
   # Get the CKAN resource
@@ -1012,11 +1047,12 @@ cbdh <- ckanr_setup("https://data.cbwaterhub.ca/") # No need for a key here
   era_mic1_site <- fetch_era_mic1 %>%
     first() %>% # Only need the first record to get coordinates
     select(site_id, latitude, longitude) %>%
-    mutate(site_uid = site_id) %>% # llc for Living Lakes Canada; nk for North Kootenay
-    mutate(site_name = "Michel Creek 1",
-           dataset_unique_identifier = "SWP_DTS_A084")
+    mutate(site_uid = site_id,
+           site_name = "Michel Creek 1",
+           dataset_unique_identifier = "SWP_DTS_A084") %>%
+    select(-site_id)
   
-  era_mic1_site_sf <- st_as_sf(era_mic1_site, crs = 4326, coords = c('longitude', 'latitude'))
+  era_mic1_site_sf <- st_as_sf(era_mic1_site, crs = 4326, coords = c('longitude', 'latitude'), remove = T)
   
   # Coal Creek 5
   # Get the CKAN resource
@@ -1028,11 +1064,12 @@ cbdh <- ckanr_setup("https://data.cbwaterhub.ca/") # No need for a key here
   era_col5_site <- fetch_era_col5 %>%
     first() %>% # Only need the first record to get coordinates
     select(site_id, latitude, longitude) %>%
-    mutate(site_uid = site_id) %>% # llc for Living Lakes Canada; nk for North Kootenay
-    mutate(site_name = "Coal Creek 5",
-           dataset_unique_identifier = "SWP_DTS_A087")
+    mutate(site_uid = site_id,
+           site_name = "Coal Creek 5",
+           dataset_unique_identifier = "SWP_DTS_A087") %>%
+    select(-site_id)
   
-  era_col5_site_sf <- st_as_sf(era_col5_site, crs = 4326, coords = c('longitude', 'latitude'))
+  era_col5_site_sf <- st_as_sf(era_col5_site, crs = 4326, coords = c('longitude', 'latitude'), remove = T)
   
   # Aldridge Creek 1
   # Get the CKAN resource
@@ -1044,11 +1081,12 @@ cbdh <- ckanr_setup("https://data.cbwaterhub.ca/") # No need for a key here
   era_ald1_site <- fetch_era_ald1 %>%
     first() %>% # Only need the first record to get coordinates
     select(site_id, latitude, longitude) %>%
-    mutate(site_uid = site_id) %>% # llc for Living Lakes Canada; nk for North Kootenay
-    mutate(site_name = "Aldridge Creek 1",
-           dataset_unique_identifier = "SWP_DTS_A088")
+    mutate(site_uid = site_id,
+           site_name = "Aldridge Creek 1",
+           dataset_unique_identifier = "SWP_DTS_A088") %>%
+    select(-site_id)
   
-  era_ald1_site_sf <- st_as_sf(era_ald1_site, crs = 4326, coords = c('longitude', 'latitude'))
+  era_ald1_site_sf <- st_as_sf(era_ald1_site, crs = 4326, coords = c('longitude', 'latitude'), remove = T)
   
   # Boivin Creek 2
   # Get the CKAN resource
@@ -1060,11 +1098,12 @@ cbdh <- ckanr_setup("https://data.cbwaterhub.ca/") # No need for a key here
   era_boi2_site <- fetch_era_boi2 %>%
     first() %>% # Only need the first record to get coordinates
     select(site_id, latitude, longitude) %>%
-    mutate(site_uid = site_id) %>% # llc for Living Lakes Canada; nk for North Kootenay
-    mutate(site_name = "Boivin Creek 2",
-           dataset_unique_identifier = "SWP_DTS_A092")
+    mutate(site_uid = site_id,
+           site_name = "Boivin Creek 2",
+           dataset_unique_identifier = "SWP_DTS_A092") %>%
+    select(-site_id)
   
-  era_boi2_site_sf <- st_as_sf(era_boi2_site, crs = 4326, coords = c('longitude', 'latitude'))
+  era_boi2_site_sf <- st_as_sf(era_boi2_site, crs = 4326, coords = c('longitude', 'latitude'), remove = T)
   
   # Boivin Creek 1
   # Get the CKAN resource
@@ -1076,11 +1115,12 @@ cbdh <- ckanr_setup("https://data.cbwaterhub.ca/") # No need for a key here
   era_boi1_site <- fetch_era_boi1 %>%
     first() %>% # Only need the first record to get coordinates
     select(site_id, latitude, longitude) %>%
-    mutate(site_uid = site_id) %>% # llc for Living Lakes Canada; nk for North Kootenay
-    mutate(site_name = "Boivin Creek 1",
-           dataset_unique_identifier = "SWP_DTS_A103")
+    mutate(site_uid = site_id,
+           site_name = "Boivin Creek 1",
+           dataset_unique_identifier = "SWP_DTS_A103") %>%
+    select(-site_id)
   
-  era_boi1_site_sf <- st_as_sf(era_boi1_site, crs = 4326, coords = c('longitude', 'latitude'))
+  era_boi1_site_sf <- st_as_sf(era_boi1_site, crs = 4326, coords = c('longitude', 'latitude'), remove = T)
   
   # Alexander Creek 1
   # Get the CKAN resource
@@ -1092,11 +1132,12 @@ cbdh <- ckanr_setup("https://data.cbwaterhub.ca/") # No need for a key here
   era_alx1_site <- fetch_era_alx1 %>%
     first() %>% # Only need the first record to get coordinates
     select(site_id, latitude, longitude) %>%
-    mutate(site_uid = site_id) %>% # llc for Living Lakes Canada; nk for North Kootenay
-    mutate(site_name = "Alexander Creek 1",
-           dataset_unique_identifier = "SWP_DTS_A111")
+    mutate(site_uid = site_id,
+           site_name = "Alexander Creek 1",
+           dataset_unique_identifier = "SWP_DTS_A111") %>%
+    select(-site_id)
   
-  era_alx1_site_sf <- st_as_sf(era_alx1_site, crs = 4326, coords = c('longitude', 'latitude'))
+  era_alx1_site_sf <- st_as_sf(era_alx1_site, crs = 4326, coords = c('longitude', 'latitude'), remove = T)
   
   # Coal Creek 3
   # Get the CKAN resource
@@ -1108,11 +1149,12 @@ cbdh <- ckanr_setup("https://data.cbwaterhub.ca/") # No need for a key here
   era_col3_site <- fetch_era_col3 %>%
     first() %>% # Only need the first record to get coordinates
     select(site_id, latitude, longitude) %>%
-    mutate(site_uid = site_id) %>% # llc for Living Lakes Canada; nk for North Kootenay
-    mutate(site_name = "Coal Creek 3",
-           dataset_unique_identifier = "SWP_DTS_A114")
+    mutate(site_uid = site_id,
+           site_name = "Coal Creek 3",
+           dataset_unique_identifier = "SWP_DTS_A114") %>%
+    select(-site_id)
   
-  era_col3_site_sf <- st_as_sf(era_col3_site, crs = 4326, coords = c('longitude', 'latitude'))
+  era_col3_site_sf <- st_as_sf(era_col3_site, crs = 4326, coords = c('longitude', 'latitude'), remove = T)
   
   # Morissey Creek 1
   # Get the CKAN resource
@@ -1124,11 +1166,12 @@ cbdh <- ckanr_setup("https://data.cbwaterhub.ca/") # No need for a key here
   era_mor1_site <- fetch_era_mor1 %>%
     first() %>% # Only need the first record to get coordinates
     select(site_id, latitude, longitude) %>%
-    mutate(site_uid = site_id) %>% # llc for Living Lakes Canada; nk for North Kootenay
-    mutate(site_name = "Morrissey Creek 1",
-           dataset_unique_identifier = "SWP_DTS_A119")
+    mutate(site_uid = site_id,
+           site_name = "Morrissey Creek 1",
+           dataset_unique_identifier = "SWP_DTS_A119") %>%
+    select(-site_id)
   
-  era_mor1_site_sf <- st_as_sf(era_mor1_site, crs = 4326, coords = c('longitude', 'latitude'))
+  era_mor1_site_sf <- st_as_sf(era_mor1_site, crs = 4326, coords = c('longitude', 'latitude'), remove = T)
   
   # Lizard Creek 1
   # Get the CKAN resource
@@ -1140,11 +1183,12 @@ cbdh <- ckanr_setup("https://data.cbwaterhub.ca/") # No need for a key here
   era_liz1_site <- fetch_era_liz1 %>%
     first() %>% # Only need the first record to get coordinates
     select(site_id, latitude, longitude) %>%
-    mutate(site_uid = site_id) %>% # llc for Living Lakes Canada; nk for North Kootenay
-    mutate(site_name = "Lizard Creek 1",
-           dataset_unique_identifier = "SWP_DTS_A121")
+    mutate(site_uid = site_id,
+           site_name = "Lizard Creek 1",
+           dataset_unique_identifier = "SWP_DTS_A121") %>%
+    select(-site_id)
   
-  era_liz1_site_sf <- st_as_sf(era_liz1_site, crs = 4326, coords = c('longitude', 'latitude'))
+  era_liz1_site_sf <- st_as_sf(era_liz1_site, crs = 4326, coords = c('longitude', 'latitude'), remove = T)
   
   # Merge all Elk River (Watershed) Alliance together
   era_all_sites_sf <- bind_rows(era_alx1_site_sf, era_liz1_site_sf, era_mor1_site_sf,
@@ -1154,13 +1198,11 @@ cbdh <- ckanr_setup("https://data.cbwaterhub.ca/") # No need for a key here
                                 era_elk1_site_sf, era_liz5_site_sf, era_liz6_site_sf,
                                 era_wil1_site_sf)
   
-# Prepare Friends of Kootenay Lake monitoring sites ---------------------------
+# Prepare Friends of Kootenay Lake monitoring sites ----------------------------
 # Those sites below can be merged if necessary, but they are separate entries in the catalog
 # Based on description, there are 10 sites, but the dataset only has one coordinate set for all 10 loggers...
 # Needs some more investigation when actual data ingestion happens
-# Connects to Columbia Basin Data Hub
-cbdh <- ckanr_setup("https://data.cbwaterhub.ca/") # No need for a key here
-  
+
   # Kootenay Lake (West arm)
   # Get the CKAN resource
   fkl_west <- resource_show(id = "17d6333b-aec9-45b3-9aea-dfeeca091c96",
@@ -1171,11 +1213,12 @@ cbdh <- ckanr_setup("https://data.cbwaterhub.ca/") # No need for a key here
   fkl_west_site <- fetch_fkl_west %>%
     first() %>% # Only need the first record to get coordinates
     select(site_id, latitude, longitude) %>%
-    mutate(site_uid = site_id) %>% # llc for Living Lakes Canada; nk for North Kootenay
-    mutate(site_name = "Kootenay Lake West Arm",
-           dataset_unique_identifier = "SWP_DTS_A075")
+    mutate(site_uid = site_id,
+           site_name = "Kootenay Lake West Arm",
+           dataset_unique_identifier = "SWP_DTS_A075") %>%
+    select(-site_id)
   
-  fkl_west_site_sf <- st_as_sf(fkl_west_site, crs = 4326, coords = c('longitude', 'latitude'))
+  fkl_west_site_sf <- st_as_sf(fkl_west_site, crs = 4326, coords = c('longitude', 'latitude'), remove = T)
   
   # Lake shore
   # Get the CKAN resource
@@ -1187,11 +1230,12 @@ cbdh <- ckanr_setup("https://data.cbwaterhub.ca/") # No need for a key here
   fkl_shor_site <- fetch_fkl_shor %>%
     first() %>% # Only need the first record to get coordinates
     select(site_id, latitude, longitude) %>%
-    mutate(site_uid = site_id) %>% # llc for Living Lakes Canada; nk for North Kootenay
-    mutate(site_name = "Shore spawning Kokanee",
-           dataset_unique_identifier = "SWP_DTS_A140")
+    mutate(site_uid = site_id,
+           site_name = "Shore spawning Kokanee",
+           dataset_unique_identifier = "SWP_DTS_A140") %>%
+    select(-site_id)
   
-  fkl_shor_site_sf <- st_as_sf(fkl_shor_site, crs = 4326, coords = c('longitude', 'latitude'))
+  fkl_shor_site_sf <- st_as_sf(fkl_shor_site, crs = 4326, coords = c('longitude', 'latitude'), remove = T)
   
   # Merge all Friends of Kootenay Lake together
   fkl_all_sites <- bind_rows(fkl_shor_site_sf, fkl_west_site_sf)
@@ -1199,9 +1243,7 @@ cbdh <- ckanr_setup("https://data.cbwaterhub.ca/") # No need for a key here
 
 # Prepare Friends of Lardeau River monitoring sites ---------------------------
 # Those sites below can be merged if necessary, but they are separate entries in the catalog
-# Connects to Columbia Basin Data Hub
-cbdh <- ckanr_setup("https://data.cbwaterhub.ca/") # No need for a key here
-  
+
   # Poplar Creek
   # Get the CKAN resource
   flr_pop <- resource_show(id = "53b92bd2-6a43-4401-8a1a-77abb15d3d74",
@@ -1212,11 +1254,12 @@ cbdh <- ckanr_setup("https://data.cbwaterhub.ca/") # No need for a key here
   flr_pop_site <- fetch_flr_pop %>%
     first() %>% # Only need the first record to get coordinates
     select(site_id, latitude, longitude) %>%
-    mutate(site_uid = site_id) %>% # llc for Living Lakes Canada; nk for North Kootenay
-    mutate(site_name = "Poplar Creek",
-           dataset_unique_identifier = "SWP_DTS_A125")
+    mutate(site_uid = site_id,
+           site_name = "Poplar Creek",
+           dataset_unique_identifier = "SWP_DTS_A125") %>%
+    select(-site_id)
   
-  flr_pop_site_sf <- st_as_sf(flr_pop_site, crs = 4326, coords = c('longitude', 'latitude'))
+  flr_pop_site_sf <- st_as_sf(flr_pop_site, crs = 4326, coords = c('longitude', 'latitude'), remove = T)
   
   # Lardeau River
   # Get the CKAN resource
@@ -1228,11 +1271,12 @@ cbdh <- ckanr_setup("https://data.cbwaterhub.ca/") # No need for a key here
   flr_lar_site <- fetch_flr_lar %>%
     first() %>% # Only need the first record to get coordinates
     select(site_id, latitude, longitude) %>%
-    mutate(site_uid = site_id) %>% # llc for Living Lakes Canada; nk for North Kootenay
-    mutate(site_name = "Lardeau River",
-           dataset_unique_identifier = "SWP_DTS_A126")
+    mutate(site_uid = site_id,
+           site_name = "Lardeau River",
+           dataset_unique_identifier = "SWP_DTS_A126") %>%
+    select(-site_id)
   
-  flr_lar_site_sf <- st_as_sf(flr_lar_site, crs = 4326, coords = c('longitude', 'latitude'))
+  flr_lar_site_sf <- st_as_sf(flr_lar_site, crs = 4326, coords = c('longitude', 'latitude'), remove = T)
   
   # Lardeau River Upper
   # Get the CKAN resource
@@ -1244,17 +1288,18 @@ cbdh <- ckanr_setup("https://data.cbwaterhub.ca/") # No need for a key here
   flr_lru_site <- fetch_flr_lru %>%
     first() %>% # Only need the first record to get coordinates
     select(site_id, latitude, longitude) %>%
-    mutate(site_uid = site_id) %>% # llc for Living Lakes Canada; nk for North Kootenay
-    mutate(site_name = "Lardeau River Upper",
-           dataset_unique_identifier = "SWP_DTS_A127")
+    mutate(site_uid = site_id,
+           site_name = "Lardeau River Upper",
+           dataset_unique_identifier = "SWP_DTS_A127") %>%
+    select(-site_id)
   
-  flr_lru_site_sf <- st_as_sf(flr_lru_site, crs = 4326, coords = c('longitude', 'latitude'))
+  flr_lru_site_sf <- st_as_sf(flr_lru_site, crs = 4326, coords = c('longitude', 'latitude'), remove = T)
   
   # Merge Friends of the Lardeau River monitoring sites
   flr_all_sites_sf <- bind_rows(flr_pop_site_sf, flr_lar_site_sf, flr_lru_site_sf)
 
   
-# Prepare Slocan Lake Research Centre monitoring sites ---------------------------
+# Prepare Slocan Lake Research Centre monitoring sites -------------------------
 
   # Wilson Creek
   # Get the CKAN resource
@@ -1266,14 +1311,15 @@ cbdh <- ckanr_setup("https://data.cbwaterhub.ca/") # No need for a key here
   slrc_wil_site <- fetch_slrc_wil %>%
     first() %>% # Only need the first record to get coordinates
     select(site_id, latitude, longitude) %>%
-    mutate(site_uid = site_id) %>% # llc for Living Lakes Canada; nk for North Kootenay
-    mutate(site_name = "Wilson Creek",
-           dataset_unique_identifier = "SWP_DTS_A096")
+    mutate(site_uid = as.character(site_id),
+           site_name = "Wilson Creek",
+           dataset_unique_identifier = "SWP_DTS_A096") %>%
+    select(-site_id)
   
-  slrc_wil_site_sf <- st_as_sf(slrc_wil_site, crs = 4326, coords = c('longitude', 'latitude'))
+  slrc_wil_site_sf <- st_as_sf(slrc_wil_site, crs = 4326, coords = c('longitude', 'latitude'), remove = T)
   
 
-# Prepare Slocan Lake Stewardship Society and Okanagan Nation Alliance ---------------------------
+# Prepare Slocan Lake Stewardship Society and Okanagan Nation Alliance ---------
 # Those sites below can be merged if necessary, but they are separate entries in the catalog
   
   # Wilson Creek 1
@@ -1286,11 +1332,12 @@ cbdh <- ckanr_setup("https://data.cbwaterhub.ca/") # No need for a key here
   slon_wil1_site <- fetch_slon_wil1 %>%
     first() %>% # Only need the first record to get coordinates
     select(site_id, latitude, longitude) %>%
-    mutate(site_uid = site_id) %>% # llc for Living Lakes Canada; nk for North Kootenay
-    mutate(site_name = "Wilson Creek 1",
-           dataset_unique_identifier = "SWP_DTS_A067")
+    mutate(site_uid = site_id,
+           site_name = "Wilson Creek 1",
+           dataset_unique_identifier = "SWP_DTS_A067") %>%
+    select(-site_id)
   
-  slon_wil1_site_sf <- st_as_sf(slon_wil1_site, crs = 4326, coords = c('longitude', 'latitude'))
+  slon_wil1_site_sf <- st_as_sf(slon_wil1_site, crs = 4326, coords = c('longitude', 'latitude'), remove = T)
   
   # Wilson Creek 2
   # Get the CKAN resource
@@ -1302,11 +1349,12 @@ cbdh <- ckanr_setup("https://data.cbwaterhub.ca/") # No need for a key here
   slon_wil2_site <- fetch_slon_wil2 %>%
     first() %>% # Only need the first record to get coordinates
     select(site_id, latitude, longitude) %>%
-    mutate(site_uid = site_id) %>% # llc for Living Lakes Canada; nk for North Kootenay
-    mutate(site_name = "Wilson Creek 2",
-           dataset_unique_identifier = "SWP_DTS_A068")
+    mutate(site_uid = site_id,
+           site_name = "Wilson Creek 2",
+           dataset_unique_identifier = "SWP_DTS_A068") %>%
+    select(-site_id)
   
-  slon_wil2_site_sf <- st_as_sf(slon_wil2_site, crs = 4326, coords = c('longitude', 'latitude'))
+  slon_wil2_site_sf <- st_as_sf(slon_wil2_site, crs = 4326, coords = c('longitude', 'latitude'), remove = T)
   
   # Wragge Creek
   # Get the CKAN resource
@@ -1318,11 +1366,12 @@ cbdh <- ckanr_setup("https://data.cbwaterhub.ca/") # No need for a key here
   slon_wrag_site <- fetch_slon_wrag %>%
     first() %>% # Only need the first record to get coordinates
     select(site_id, latitude, longitude) %>%
-    mutate(site_uid = site_id) %>% # llc for Living Lakes Canada; nk for North Kootenay
-    mutate(site_name = "Wragge Creek",
-           dataset_unique_identifier = "SWP_DTS_A069")
+    mutate(site_uid = site_id,
+           site_name = "Wragge Creek",
+           dataset_unique_identifier = "SWP_DTS_A069") %>%
+    select(-site_id)
   
-  slon_wrag_site_sf <- st_as_sf(slon_wrag_site, crs = 4326, coords = c('longitude', 'latitude'))
+  slon_wrag_site_sf <- st_as_sf(slon_wrag_site, crs = 4326, coords = c('longitude', 'latitude'), remove = T)
   
   # Shannon Creek
   # Get the CKAN resource
@@ -1334,11 +1383,12 @@ cbdh <- ckanr_setup("https://data.cbwaterhub.ca/") # No need for a key here
   slon_shan_site <- fetch_slon_shan %>%
     first() %>% # Only need the first record to get coordinates
     select(site_id, latitude, longitude) %>%
-    mutate(site_uid = site_id) %>% # llc for Living Lakes Canada; nk for North Kootenay
-    mutate(site_name = "Shannon Creek",
-           dataset_unique_identifier = "SWP_DTS_A070")
+    mutate(site_uid = site_id,
+           site_name = "Shannon Creek",
+           dataset_unique_identifier = "SWP_DTS_A070") %>%
+    select(-site_id)
   
-  slon_shan_site_sf <- st_as_sf(slon_shan_site, crs = 4326, coords = c('longitude', 'latitude'))
+  slon_shan_site_sf <- st_as_sf(slon_shan_site, crs = 4326, coords = c('longitude', 'latitude'), remove = T)
   
   # Maurier Creek
   # Get the CKAN resource
@@ -1350,11 +1400,12 @@ cbdh <- ckanr_setup("https://data.cbwaterhub.ca/") # No need for a key here
   slon_maur_site <- fetch_slon_maur %>%
     first() %>% # Only need the first record to get coordinates
     select(site_id, latitude, longitude) %>%
-    mutate(site_uid = site_id) %>% # llc for Living Lakes Canada; nk for North Kootenay
-    mutate(site_name = "Maurier Creek",
-           dataset_unique_identifier = "SWP_DTS_A072")
+    mutate(site_uid = site_id,
+           site_name = "Maurier Creek",
+           dataset_unique_identifier = "SWP_DTS_A072") %>%
+    select(-site_id)
   
-  slon_maur_site_sf <- st_as_sf(slon_maur_site, crs = 4326, coords = c('longitude', 'latitude'))
+  slon_maur_site_sf <- st_as_sf(slon_maur_site, crs = 4326, coords = c('longitude', 'latitude'), remove = T)
   
   # Hunter Siding
   # Get the CKAN resource
@@ -1366,11 +1417,12 @@ cbdh <- ckanr_setup("https://data.cbwaterhub.ca/") # No need for a key here
   slon_hunt_site <- fetch_slon_hunt %>%
     first() %>% # Only need the first record to get coordinates
     select(site_id, latitude, longitude) %>%
-    mutate(site_uid = site_id) %>% # llc for Living Lakes Canada; nk for North Kootenay
-    mutate(site_name = "Hunter Siding",
-           dataset_unique_identifier = "SWP_DTS_A073")
+    mutate(site_uid = site_id,
+           site_name = "Hunter Siding",
+           dataset_unique_identifier = "SWP_DTS_A073") %>%
+    select(-site_id)
   
-  slon_hunt_site_sf <- st_as_sf(slon_hunt_site, crs = 4326, coords = c('longitude', 'latitude'))
+  slon_hunt_site_sf <- st_as_sf(slon_hunt_site, crs = 4326, coords = c('longitude', 'latitude'), remove = T)
   
   # Dennis Creek
   # Get the CKAN resource
@@ -1382,11 +1434,12 @@ cbdh <- ckanr_setup("https://data.cbwaterhub.ca/") # No need for a key here
   slon_den_site <- fetch_slon_den %>%
     first() %>% # Only need the first record to get coordinates
     select(site_id, latitude, longitude) %>%
-    mutate(site_uid = site_id) %>% # llc for Living Lakes Canada; nk for North Kootenay
-    mutate(site_name = "Dennis Creek",
-           dataset_unique_identifier = "SWP_DTS_A074")
+    mutate(site_uid = site_id,
+           site_name = "Dennis Creek",
+           dataset_unique_identifier = "SWP_DTS_A074") %>%
+    select(-site_id)
   
-  slon_den_site_sf <- st_as_sf(slon_den_site, crs = 4326, coords = c('longitude', 'latitude'))
+  slon_den_site_sf <- st_as_sf(slon_den_site, crs = 4326, coords = c('longitude', 'latitude'), remove = T)
   
   # Slocan River
   # Get the CKAN resource
@@ -1398,11 +1451,12 @@ cbdh <- ckanr_setup("https://data.cbwaterhub.ca/") # No need for a key here
   slon_sloc_site <- fetch_slon_sloc %>%
     first() %>% # Only need the first record to get coordinates
     select(site_id, latitude, longitude) %>%
-    mutate(site_uid = site_id) %>% # llc for Living Lakes Canada; nk for North Kootenay
-    mutate(site_name = "Slocan River",
-           dataset_unique_identifier = "SWP_DTS_A089")
+    mutate(site_uid = site_id,
+           site_name = "Slocan River",
+           dataset_unique_identifier = "SWP_DTS_A089") %>%
+    select(-site_id)
   
-  slon_sloc_site_sf <- st_as_sf(slon_sloc_site, crs = 4326, coords = c('longitude', 'latitude'))
+  slon_sloc_site_sf <- st_as_sf(slon_sloc_site, crs = 4326, coords = c('longitude', 'latitude'), remove = T)
   
   # Fitzstubbs Creek
   # Get the CKAN resource
@@ -1414,11 +1468,12 @@ cbdh <- ckanr_setup("https://data.cbwaterhub.ca/") # No need for a key here
   slon_fitz_site <- fetch_slon_fitz %>%
     first() %>% # Only need the first record to get coordinates
     select(site_id, latitude, longitude) %>%
-    mutate(site_uid = site_id) %>% # llc for Living Lakes Canada; nk for North Kootenay
-    mutate(site_name = "Fitzstubbs Creek",
-           dataset_unique_identifier = "SWP_DTS_A090")
+    mutate(site_uid = site_id,
+           site_name = "Fitzstubbs Creek",
+           dataset_unique_identifier = "SWP_DTS_A090") %>%
+    select(-site_id)
   
-  slon_fitz_site_sf <- st_as_sf(slon_fitz_site, crs = 4326, coords = c('longitude', 'latitude'))
+  slon_fitz_site_sf <- st_as_sf(slon_fitz_site, crs = 4326, coords = c('longitude', 'latitude'), remove = T)
   
   # Merge Slocan Lake Stewardship Society and Okanagan Nation Alliance sites together
   slon_all_sites_sf <- bind_rows(slon_fitz_site_sf, slon_sloc_site_sf, slon_den_site_sf,
@@ -1455,14 +1510,15 @@ cbdh <- ckanr_setup("https://data.cbwaterhub.ca/") # No need for a key here
   care_rad_site <- fetch_care_rad %>%
     first() %>% # Only need the first record to get coordinates
     select(site_id, latitude, longitude) %>%
-    mutate(site_uid = site_id) %>% # llc for Living Lakes Canada; nk for North Kootenay
-    mutate(site_name = "Radcliffe Creek",
-           dataset_unique_identifier = "SWP_DTS_A107")
+    mutate(site_uid = site_id,
+           site_name = "Radcliffe Creek",
+           dataset_unique_identifier = "SWP_DTS_A107") %>%
+    select(-site_id)
   
-  care_rad_site_sf <- st_as_sf(care_rad_site, crs = 4326, coords = c('longitude', 'latitude'))
+  care_rad_site_sf <- st_as_sf(care_rad_site, crs = 4326, coords = c('longitude', 'latitude'), remove = T)
   
 
-# Prepare Slocan River Streamkeepers monitoring sites ---------------------
+# Prepare Slocan River Streamkeepers monitoring sites --------------------------
 # Those sites below can be merged if necessary, but they are separate entries in the catalog
   
   # South Slocan River
@@ -1475,11 +1531,12 @@ cbdh <- ckanr_setup("https://data.cbwaterhub.ca/") # No need for a key here
   srs_ssr_site <- fetch_srs_ssr %>%
     first() %>% # Only need the first record to get coordinates
     select(site_id, latitude, longitude) %>%
-    mutate(site_uid = site_id) %>% # llc for Living Lakes Canada; nk for North Kootenay
-    mutate(site_name = "South Slocan River",
-           dataset_unique_identifier = "SWP_DTS_A099")
+    mutate(site_uid = site_id,
+           site_name = "South Slocan River",
+           dataset_unique_identifier = "SWP_DTS_A099") %>%
+    select(-site_id)
   
-  srs_ssr_site_sf <- st_as_sf(srs_ssr_site, crs = 4326, coords = c('longitude', 'latitude'))
+  srs_ssr_site_sf <- st_as_sf(srs_ssr_site, crs = 4326, coords = c('longitude', 'latitude'), remove = T)
   
   # Little Slocan River
   # Get the CKAN resource
@@ -1491,11 +1548,12 @@ cbdh <- ckanr_setup("https://data.cbwaterhub.ca/") # No need for a key here
   srs_lsr_site <- fetch_srs_lsr %>%
     first() %>% # Only need the first record to get coordinates
     select(site_id, latitude, longitude) %>%
-    mutate(site_uid = site_id) %>% # llc for Living Lakes Canada; nk for North Kootenay
-    mutate(site_name = "Little Slocan River",
-           dataset_unique_identifier = "SWP_DTS_A091")
+    mutate(site_uid = site_id,
+           site_name = "Little Slocan River",
+           dataset_unique_identifier = "SWP_DTS_A091") %>%
+    select(-site_id)
   
-  srs_lsr_site_sf <- st_as_sf(srs_lsr_site, crs = 4326, coords = c('longitude', 'latitude'))
+  srs_lsr_site_sf <- st_as_sf(srs_lsr_site, crs = 4326, coords = c('longitude', 'latitude'), remove = T)
   
   # Springer Creek
   # Get the CKAN resource
@@ -1507,11 +1565,12 @@ cbdh <- ckanr_setup("https://data.cbwaterhub.ca/") # No need for a key here
   srs_spr_site <- fetch_srs_spr %>%
     first() %>% # Only need the first record to get coordinates
     select(site_id, latitude, longitude) %>%
-    mutate(site_uid = site_id) %>% # llc for Living Lakes Canada; nk for North Kootenay
-    mutate(site_name = "Springer Creek",
-           dataset_unique_identifier = "SWP_DTS_A124")
+    mutate(site_uid = site_id,
+           site_name = "Springer Creek",
+           dataset_unique_identifier = "SWP_DTS_A124") %>%
+    select(-site_id)
   
-  srs_spr_site_sf <- st_as_sf(srs_spr_site, crs = 4326, coords = c('longitude', 'latitude'))
+  srs_spr_site_sf <- st_as_sf(srs_spr_site, crs = 4326, coords = c('longitude', 'latitude'), remove = T)
   
   # Slocan River 2
   # Get the CKAN resource
@@ -1523,11 +1582,12 @@ cbdh <- ckanr_setup("https://data.cbwaterhub.ca/") # No need for a key here
   srs_slo2_site <- fetch_srs_slo2 %>%
     first() %>% # Only need the first record to get coordinates
     select(site_id, latitude, longitude) %>%
-    mutate(site_uid = site_id) %>% # llc for Living Lakes Canada; nk for North Kootenay
-    mutate(site_name = "Slocan River 2",
-           dataset_unique_identifier = "SWP_DTS_A097")
+    mutate(site_uid = site_id,
+           site_name = "Slocan River 2",
+           dataset_unique_identifier = "SWP_DTS_A097") %>%
+    select(-site_id)
   
-  srs_slo2_site_sf <- st_as_sf(srs_slo2_site, crs = 4326, coords = c('longitude', 'latitude'))
+  srs_slo2_site_sf <- st_as_sf(srs_slo2_site, crs = 4326, coords = c('longitude', 'latitude'), remove = T)
   
   # Trozzo Creek 
   # Get the CKAN resource
@@ -1539,11 +1599,12 @@ cbdh <- ckanr_setup("https://data.cbwaterhub.ca/") # No need for a key here
   srs_troz_site <- fetch_srs_troz %>%
     first() %>% # Only need the first record to get coordinates
     select(site_id, latitude, longitude) %>%
-    mutate(site_uid = site_id) %>% # llc for Living Lakes Canada; nk for North Kootenay
-    mutate(site_name = "Trozzo Creek",
-           dataset_unique_identifier = "SWP_DTS_A098")
+    mutate(site_uid = site_id,
+           site_name = "Trozzo Creek",
+           dataset_unique_identifier = "SWP_DTS_A098") %>%
+    select(-site_id)
   
-  srs_troz_site_sf <- st_as_sf(srs_troz_site, crs = 4326, coords = c('longitude', 'latitude'))
+  srs_troz_site_sf <- st_as_sf(srs_troz_site, crs = 4326, coords = c('longitude', 'latitude'), remove = T)
   
   # Slocan River 1
   # Get the CKAN resource
@@ -1555,11 +1616,12 @@ cbdh <- ckanr_setup("https://data.cbwaterhub.ca/") # No need for a key here
   srs_slo1_site <- fetch_srs_slo1 %>%
     first() %>% # Only need the first record to get coordinates
     select(site_id, latitude, longitude) %>%
-    mutate(site_uid = site_id) %>% # llc for Living Lakes Canada; nk for North Kootenay
-    mutate(site_name = "Slocan River 1",
-           dataset_unique_identifier = "SWP_DTS_A105")
+    mutate(site_uid = site_id,
+           site_name = "Slocan River 1",
+           dataset_unique_identifier = "SWP_DTS_A105") %>%
+    select(-site_id)
   
-  srs_slo1_site_sf <- st_as_sf(srs_slo1_site, crs = 4326, coords = c('longitude', 'latitude'))
+  srs_slo1_site_sf <- st_as_sf(srs_slo1_site, crs = 4326, coords = c('longitude', 'latitude'), remove = T)
   
   # Slocan River 3
   # Get the CKAN resource
@@ -1571,11 +1633,12 @@ cbdh <- ckanr_setup("https://data.cbwaterhub.ca/") # No need for a key here
   srs_slo3_site <- fetch_srs_slo3 %>%
     first() %>% # Only need the first record to get coordinates
     select(site_id, latitude, longitude) %>%
-    mutate(site_uid = site_id) %>% # llc for Living Lakes Canada; nk for North Kootenay
-    mutate(site_name = "Slocan River 3",
-           dataset_unique_identifier = "SWP_DTS_A106")
+    mutate(site_uid = site_id,
+           site_name = "Slocan River 3",
+           dataset_unique_identifier = "SWP_DTS_A106") %>%
+    select(-site_id)
   
-  srs_slo3_site_sf <- st_as_sf(srs_slo3_site, crs = 4326, coords = c('longitude', 'latitude'))
+  srs_slo3_site_sf <- st_as_sf(srs_slo3_site, crs = 4326, coords = c('longitude', 'latitude'), remove = T)
   
   # Lemon Creek
   # Get the CKAN resource
@@ -1587,11 +1650,12 @@ cbdh <- ckanr_setup("https://data.cbwaterhub.ca/") # No need for a key here
   srs_lemo_site <- fetch_srs_lemo %>%
     first() %>% # Only need the first record to get coordinates
     select(site_id, latitude, longitude) %>%
-    mutate(site_uid = site_id) %>% # llc for Living Lakes Canada; nk for North Kootenay
-    mutate(site_name = "Lemon Creek",
-           dataset_unique_identifier = "SWP_DTS_A109")
+    mutate(site_uid = site_id,
+           site_name = "Lemon Creek",
+           dataset_unique_identifier = "SWP_DTS_A109") %>%
+    select(-site_id)
   
-  srs_lemo_site_sf <- st_as_sf(srs_lemo_site, crs = 4326, coords = c('longitude', 'latitude'))
+  srs_lemo_site_sf <- st_as_sf(srs_lemo_site, crs = 4326, coords = c('longitude', 'latitude'), remove = T)
   
   # Hoder Creek
   # Get the CKAN resource
@@ -1603,11 +1667,12 @@ cbdh <- ckanr_setup("https://data.cbwaterhub.ca/") # No need for a key here
   srs_hodr_site <- fetch_srs_hodr %>%
     first() %>% # Only need the first record to get coordinates
     select(site_id, latitude, longitude) %>%
-    mutate(site_uid = site_id) %>% # llc for Living Lakes Canada; nk for North Kootenay
-    mutate(site_name = "Hoder Creek",
-           dataset_unique_identifier = "SWP_DTS_A110")
+    mutate(site_uid = site_id,
+           site_name = "Hoder Creek",
+           dataset_unique_identifier = "SWP_DTS_A110") %>%
+    select(-site_id)
   
-  srs_hodr_site_sf <- st_as_sf(srs_hodr_site, crs = 4326, coords = c('longitude', 'latitude'))
+  srs_hodr_site_sf <- st_as_sf(srs_hodr_site, crs = 4326, coords = c('longitude', 'latitude'), remove = T)
   
   # Winlow Creek
   # Get the CKAN resource
@@ -1619,11 +1684,12 @@ cbdh <- ckanr_setup("https://data.cbwaterhub.ca/") # No need for a key here
   srs_winl_site <- fetch_srs_winl %>%
     first() %>% # Only need the first record to get coordinates
     select(site_id, latitude, longitude) %>%
-    mutate(site_uid = site_id) %>% # llc for Living Lakes Canada; nk for North Kootenay
-    mutate(site_name = "Winlow Creek",
-           dataset_unique_identifier = "SWP_DTS_A131")
+    mutate(site_uid = site_id,
+           site_name = "Winlow Creek",
+           dataset_unique_identifier = "SWP_DTS_A131") %>%
+    select(-site_id)
   
-  srs_winl_site_sf <- st_as_sf(srs_winl_site, crs = 4326, coords = c('longitude', 'latitude'))
+  srs_winl_site_sf <- st_as_sf(srs_winl_site, crs = 4326, coords = c('longitude', 'latitude'), remove = T)
 
   # Merge Slocan Lake Stewardship Society and Okanagan Nation Alliance sites together
   srs_all_sites_sf <- bind_rows(srs_ssr_site_sf, srs_lsr_site_sf,srs_spr_site_sf,
@@ -1645,11 +1711,12 @@ cbdh <- ckanr_setup("https://data.cbwaterhub.ca/") # No need for a key here
   wil_birc_site <- fetch_wil_birc %>%
     first() %>% # Only need the first record to get coordinates
     select(site_id, latitude, longitude) %>%
-    mutate(site_uid = site_id) %>%
-    mutate(site_name = "Birchlands Creek",
-           dataset_unique_identifier = "SWP_DTS_A133")
+    mutate(site_uid = site_id,
+           site_name = "Birchlands Creek",
+           dataset_unique_identifier = "SWP_DTS_A133") %>%
+    select(-site_id)
   
-  wil_birc_site_sf <- st_as_sf(wil_birc_site, crs = 4326, coords = c('longitude', 'latitude'))
+  wil_birc_site_sf <- st_as_sf(wil_birc_site, crs = 4326, coords = c('longitude', 'latitude'), remove = T)
   
   # Kimberley Creek 3
   # Get the CKAN resource
@@ -1661,11 +1728,12 @@ cbdh <- ckanr_setup("https://data.cbwaterhub.ca/") # No need for a key here
   wil_kim3_site <- fetch_wil_kim3 %>%
     first() %>% # Only need the first record to get coordinates
     select(site_id, latitude, longitude) %>%
-    mutate(site_uid = site_id) %>%
-    mutate(site_name = "Kimberley Creek 3",
-           dataset_unique_identifier = "SWP_DTS_A128")
+    mutate(site_uid = site_id,
+           site_name = "Kimberley Creek 3",
+           dataset_unique_identifier = "SWP_DTS_A128") %>%
+    select(-site_id)
   
-  wil_kim3_site_sf <- st_as_sf(wil_kim3_site, crs = 4326, coords = c('longitude', 'latitude'))
+  wil_kim3_site_sf <- st_as_sf(wil_kim3_site, crs = 4326, coords = c('longitude', 'latitude'), remove = T)
   
   # Kimberley Creek 2
   # Get the CKAN resource
@@ -1677,11 +1745,12 @@ cbdh <- ckanr_setup("https://data.cbwaterhub.ca/") # No need for a key here
   wil_kim2_site <- fetch_wil_kim2 %>%
     first() %>% # Only need the first record to get coordinates
     select(site_id, latitude, longitude) %>%
-    mutate(site_uid = site_id) %>%
-    mutate(site_name = "Kimberley Creek 2",
-           dataset_unique_identifier = "SWP_DTS_A129")
+    mutate(site_uid = site_id,
+           site_name = "Kimberley Creek 2",
+           dataset_unique_identifier = "SWP_DTS_A129") %>%
+    select(-site_id)
   
-  wil_kim2_site_sf <- st_as_sf(wil_kim2_site, crs = 4326, coords = c('longitude', 'latitude'))
+  wil_kim2_site_sf <- st_as_sf(wil_kim2_site, crs = 4326, coords = c('longitude', 'latitude'), remove = T)
   
   # Kimberley Creek 1
   # Get the CKAN resource
@@ -1693,11 +1762,12 @@ cbdh <- ckanr_setup("https://data.cbwaterhub.ca/") # No need for a key here
   wil_kim1_site <- fetch_wil_kim1 %>%
     first() %>% # Only need the first record to get coordinates
     select(site_id, latitude, longitude) %>%
-    mutate(site_uid = site_id) %>%
-    mutate(site_name = "Kimberley Creek 1",
-           dataset_unique_identifier = "SWP_DTS_A130")
+    mutate(site_uid = site_id,
+           site_name = "Kimberley Creek 1",
+           dataset_unique_identifier = "SWP_DTS_A130") %>%
+    select(-site_id)
   
-  wil_kim1_site_sf <- st_as_sf(wil_kim1_site, crs = 4326, coords = c('longitude', 'latitude'))
+  wil_kim1_site_sf <- st_as_sf(wil_kim1_site, crs = 4326, coords = c('longitude', 'latitude'), remove = T)
   
   # Merge Wildsight monitoring sites together
   wil_all_sites_sf <- bind_rows(wil_birc_site_sf, wil_kim3_site_sf,
@@ -1711,31 +1781,22 @@ cbdh <- ckanr_setup("https://data.cbwaterhub.ca/") # No need for a key here
   
 site_catalogue_sf <- bind_rows(bc_compiled_sf, hakai_sf,
                                unbc_sf, cosmo_sf, res_waters_sf, pss_sf, skt_ub_sf, 
-                               pacfish_sf, swss_sheep_site_sf, swss_salmo_site_sf, 
-                               swss_curtis_site_sf, swss_hidden_site_sf, swss_qua_site_sf, 
-                               swss_clearwater_site_sf, swss_erie_site_sf, kitasoo_sites_sf, 
+                               pacfish_sf, swss_all_sites_sf, kitasoo_sites_sf, 
                                GWA_SFC_sites_sf, shushwap_sf, sfu_swl_sites_sf, 
                                ubc_moore_sites_sf, uofa_kluane_sites_sf, 
                                unbc_quesnel_sites_sf, scsk_sf, bcgov_bev_sites_sf, 
                                dfo_somass_sites_sf, dfo_yukon_sites_sf, sfu_reynolds_sites_sf,
-                               llc_carlyle_site_sf, llc_gar_site_sf,
-                               llc_mcdo_site_sf, llc_davis_site_sf, llc_bjerk_site_sf,
-                               llc_koot_site_sf, llc_benh_site_sf, llc_ujl_site_sf, llc_sap_site_sf,
-                               ross_hale_site_sf, ross_ceme_site_sf,
-                               ross_cent_site_sf, ross_fala_site_sf, ross_golpher_site_sf,
-                               ross_hale_site_sf, ross_milk_site_sf, ross_tiger_site_sf,
-                               ross_topp_site_sf, ross_warf_site_sf, era_all_sites_sf,
+                               llc_all_sites_sf, llchem_all_sites_sf,
+                               ross_all_sites_sf, era_all_sites_sf,
                                fkl_all_sites, flr_all_sites_sf, slrc_wil_site_sf, slon_all_sites_sf,
                                wil_all_sites_sf, srs_all_sites_sf, care_rad_site_sf) %>%
-    left_join(catalog) %>% # This should automatically use the field "dataset_unique_identifier"
-    select(-c(Id, comments, date_dts_pse, date_dts_catalog, data_sharing_agreement, data_acquired))
+    left_join(catalog) # This should automatically use the field "dataset_unique_identifier"
+
 
 
 # Save catalogue layer
 # Open format (mostly for use in QGIS)
 st_write(site_catalogue_sf, dsn = "02_PROCESSED_DATA/PSF/catalogue_monitoring_sites.gpkg", delete_dsn = T) 
-# ESRI FGDB format (for use in ArcGIS)
-fgdb_path <- 
 
 # End timer --------------------------------------------------------------
 toc()
