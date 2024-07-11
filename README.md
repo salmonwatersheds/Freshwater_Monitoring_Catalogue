@@ -1,6 +1,6 @@
 # Freshwater Monitoring Catalogue
 
-The SWP's freshwater monitoring map (or catalogue) is a collection of active and historical locations where continuous temperature has been collected, sometimes for decades. If you want to know more about this project, visit https://salmonwatersheds.ca/project/ps20/
+The SWP's freshwater monitoring map (or catalogue) is a collection of active and historical locations (1164 to date) where continuous temperature has been collected, sometimes for decades. If you want to know more about this project, visit https://salmonwatersheds.ca/project/ps20/
 
 ![app screenshot](docs/images/WebApp_Screenshot.png)
 
